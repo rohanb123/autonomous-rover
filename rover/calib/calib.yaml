@@ -1,0 +1,100 @@
+# rover/calib/calib.yaml -- P2. The Pi's calibration, written by rover/calib/calibrate_*.py.
+#
+# READ THIS BEFORE TRUSTING A NUMBER: every value tagged UNVERIFIED is a plausible default, NOT a
+# measurement. They exist so the code runs and the tests have something to load. They are wrong
+# until a calibration run replaces them, and `calibrated_at: null` is how the code knows.
+#
+# `pins` mirrors docs/01-hardware-and-assembly.md section 4 (BCM numbering). Doc 01 wins;
+# rover/tests/test_config.py compares this file against it, so a wiring change that is not
+# written into doc 01 fails the build.
+# Timing mirrors docs/00-overview-and-contracts.md section 4. Doc 00 wins.
+
+contract_version: "1.3.0"   # docs/00 section 0. A bump should fail loudly here, not drift silently.
+calibrated_at: null         # ISO-8601 of the last calibrate_*.py run. null = nothing is measured.
+
+pins:                       # BCM numbering, docs/01 section 4
+  pwm_a: 12                 # TB6612 PWMA -- left motor speed (hardware-PWM capable)
+  ain1: 5                   # TB6612 AIN1
+  ain2: 6                   # TB6612 AIN2
+  pwm_b: 13                 # TB6612 PWMB -- right motor speed
+  bin1: 20                  # TB6612 BIN1
+  bin2: 21                  # TB6612 BIN2
+  stby: 26                  # TB6612 STBY -- LOW = motors off, the safety default
+  led: 22                   # LED via 330 ohm
+  pwm_hz: 1000              # UNVERIFIED: TB6612 PWM frequency. Pi 5 -> lgpio software PWM.
+
+i2c:
+  bus: 1
+  pca9685_addr: 0x40        # docs/01 section 4
+  imu_addrs: [0x68, 0x53]   # MPU-6050 first, then accel-only ADXL345 (docs/05 U-2)
+  ads1115_addr: 0x48        # optional shoulder pot; unused at I1 (docs/05 U-4)
+
+motion:
+  # Prefer fixing a backwards motor in the wiring (docs/01 section 4). These are the escape hatch.
+  invert_left: false
+  invert_right: false
+  min_speed: 0.15           # UNVERIFIED: below this the gearmotors buzz instead of turning
+  turn_settle_s: 0.3        # P2 role doc section 5: settle between station views
+  gyro_turn_gain: 1.0       # UNVERIFIED: closed-loop turn trim
+  motor_trim: 0.0           # UNVERIFIED: >0 scales the LEFT wheel by (1 - trim). calibrate_motion.py
+  m_per_s_at:               # UNVERIFIED: measure over 1.0 m with tape (P2 role doc section 6)
+    0.3: 0.12
+    0.5: 0.20
+    0.7: 0.28
+    1.0: 0.40
+  deg_per_s_at:             # UNVERIFIED: measure over 360 deg. The timed-turn fallback for U-2.
+    0.3: 45.0
+    0.5: 80.0
+    0.7: 115.0
+    1.0: 165.0
+
+bev:
+  bev_res_m_px: 0.005       # docs/00 section 4
+  bev_size_px: 360          # 1.8 m square (P2 role doc section 6)
+  homography:               # UNVERIFIED: identity placeholder. A station built on identity is
+    - [1.0, 0.0, 0.0]       # geometrically meaningless, so station.py (I2) must refuse to run
+    - [0.0, 1.0, 0.0]       # while calibrated_at is null rather than upload nonsense to the mapper.
+    - [0.0, 0.0, 1.0]
+
+camera:
+  index: 0
+  width: 640
+  height: 480
+  fps: 30
+  fourcc: MJPG              # UNVERIFIED: much faster than YUYV over USB at 640x480
+  flush_frames: 3           # P2 role doc section 9: USB webcams buffer stale frames
+  settle_s: 0.3             # docs/05 U-21 fallback when the exposure lock does not take
+  jpeg_quality: 85
+  lock_exposure: true       # UNVERIFIED U-21: CAP_PROP_AUTO_EXPOSURE = 0.25 is V4L2 "manual"
+  exposure: 80.0            # UNVERIFIED: driver units; only used when the lock takes
+  lock_white_balance: true
+
+servos:
+  freq_hz: 50
+  shoulder_ch: 0            # docs/01 section 4: ch0 shoulder, ch1 wrist
+  wrist_ch: 1
+  limits_us: [600, 2400]    # UNVERIFIED U-5: hard clamp. Narrow it once P1 reports the real stops.
+  ramp_s: 0.4               # P2 role doc section 4, Scoop.goto default
+  scoop_us:                 # UNVERIFIED: [shoulder_us, wrist_us] per pose (docs/01 section 6.2).
+    STOW:    [1500, 1500]   # Deliberately identical to mocks/fake_rover.py SCOOP_US, so the mock
+    DEPLOY:  [1900, 1200]   # and the real rover tell the same story until calibrate_scoop.py runs.
+    CURL:    [1700, 1800]
+    PRESENT: [1300, 1750]
+    DUMP:    [1850, 1100]
+
+scoop:
+  scoop_zone_px: [240, 330, 160, 120]   # UNVERIFIED [x,y,w,h] at 640x480: where the DEPLOY lip lands
+  present_roi_px: [160, 90, 320, 240]   # UNVERIFIED [x,y,w,h]: the pebble's box in PRESENT (U-7)
+  push_m: 0.04              # P2 role doc section 4 sequence_pick, docs/01 section 6.3
+  push_speed: 0.2
+
+safety:
+  tilt_limit_deg: 35.0      # P2 role doc section 4, tilt_ok
+  heartbeat_timeout_s: 1.0  # docs/00 section 4, mirrored in config/run.yaml. Doc 00 wins.
+  stop_tick_s: 0.02         # cooperative stop granularity inside Motion; the stop-latency budget
+  tilt_clear_ticks: 5       # consecutive safe ticks before releasing a tilt cut (hysteresis)
+
+pose:
+  sigma_xy_m0: 0.01         # UNVERIFIED: dead-reckoning sigma at the start of a leg
+  sigma_xy_per_m: 0.05      # UNVERIFIED: sigma growth per metre driven
+  sigma_xy_max_m: 0.50
