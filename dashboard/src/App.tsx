@@ -1,26 +1,52 @@
-// App shell: layout grid, run selection and live/replay mode (docs/06 §2–§4).
-import { useEffect, useState } from 'react';
+// App shell: layout grid, run selection, live/replay mode, scrub time (docs/06 §2–§4).
+import { useCallback, useEffect, useMemo, useRef, useState, type ComponentType } from 'react';
+import * as mapModule from './map/MapView';
 import ConnectionBadge from './panels/ConnectionBadge';
 import EStopButton from './panels/EStopButton';
 import EventLog from './panels/EventLog';
 import HealthPanel from './panels/HealthPanel';
 import KeyframePanel from './panels/KeyframePanel';
 import MissionPanel from './panels/MissionPanel';
+import PinDetailDrawer from './panels/PinDetailDrawer';
 import QuickBar from './panels/QuickBar';
 import RunPicker from './panels/RunPicker';
 import TaskQueuePanel from './panels/TaskQueuePanel';
-import { latest, useGlobalTables, useRunTables } from './stdb/hooks';
+import TimelineScrubber, { type PlaySpeed, type ScrubTick } from './panels/TimelineScrubber';
+import { latest, useGlobalTables, useRunTables, useScrubbed } from './stdb/hooks';
+import { crossed, runWindow } from './stdb/scrub';
+import type {
+  Candidate, GlobalTile, LocalMapTile, Pose, RoverStatus, Visit,
+} from './module_bindings/types';
 
 type Mode = 'live' | 'replay';
+
+// docs/06 §4. MapView is P3's; render it when the module has a default export.
+type MapViewProps = {
+  mode: Mode;
+  poses: Pose[];
+  localTiles: LocalMapTile[];
+  globalTiles: GlobalTile[];
+  candidates: Candidate[];
+  visits: Visit[];
+  status?: RoverStatus;
+  selectedCandId?: string;
+  onSelectCand: (candId: string) => void;
+};
+const MapView = (mapModule as { default?: ComponentType<MapViewProps> }).default;
 
 export default function App() {
   const { runs, roverStatus } = useGlobalTables();
   const [runId, setRunId] = useState<string>();
-  const [pinned, setPinned] = useState(false); // true once the user picks a run by hand
+  const [pinned, setPinned] = useState(false);
   const [mode, setMode] = useState<Mode>('live');
+  const [scrub, setScrub] = useState<number>();
+  const [playing, setPlaying] = useState(false);
+  const [speed, setSpeed] = useState<PlaySpeed>(1);
+  const [selectedId, setSelectedId] = useState<string>();
+  const [autoplay, setAutoplay] = useState(false);
+  const snapped = useRef<string>();
+  const prevScrub = useRef<number | undefined>(undefined);
 
-  // Follow the newest run until the user picks one (live if it's active, else replay).
-  // Newest, not "newest active": a run left active by a crashed brain mustn't win.
   useEffect(() => {
     if (pinned || runs.length === 0) return;
     const pick = [...runs].sort((a, b) => b.startedUnix - a.startedUnix)[0];
@@ -31,7 +57,74 @@ export default function App() {
   const run = runs.find((r) => r.runId === runId);
   const t = useRunTables(runId);
   const live = mode === 'live' && run?.status === 'active';
-  const pose = latest(t.poses);
+
+  const times = useMemo(
+    () => [
+      ...t.poses, ...t.events, ...t.analyses, ...t.candidates, ...t.visits, ...t.keyframes,
+    ].map((row) => row.tUnix),
+    [t.poses, t.events, t.analyses, t.candidates, t.visits, t.keyframes],
+  );
+  const bounds = runWindow(run?.startedUnix ?? 0, run?.endedUnix ?? -1, times);
+  const scrubT = mode === 'replay' ? (scrub ?? bounds.end) : undefined;
+
+  const poses = useScrubbed(t.poses, scrubT);
+  const events = useScrubbed(t.events, scrubT);
+  const analyses = useScrubbed(t.analyses, scrubT);
+  const candidates = useScrubbed(t.candidates, scrubT);
+  const visits = useScrubbed(t.visits, scrubT);
+  const keyframes = useScrubbed(t.keyframes, scrubT);
+  const telemetry = useScrubbed(t.telemetry, scrubT);
+  const localTiles = useScrubbed(t.localTiles, scrubT);
+
+  useEffect(() => {
+    snapped.current = undefined;
+    prevScrub.current = undefined;
+    setSelectedId(undefined);
+    setPlaying(false);
+    setScrub(undefined);
+  }, [runId]);
+
+  useEffect(() => {
+    if (mode !== 'replay' || !run) {
+      setPlaying(false);
+      return;
+    }
+    if (snapped.current !== run.runId) {
+      snapped.current = run.runId;
+      setScrub(bounds.end);
+    }
+  }, [mode, run, bounds.end]);
+
+  useEffect(() => {
+    if (mode !== 'replay' || !playing || scrubT === undefined) {
+      prevScrub.current = scrubT;
+      return;
+    }
+    const from = prevScrub.current ?? scrubT;
+    const hit = crossed(analyses, from, scrubT);
+    prevScrub.current = scrubT;
+    if (hit) {
+      setAutoplay(true);
+      setSelectedId(hit.candId);
+    }
+  }, [mode, playing, scrubT, analyses]);
+
+  const closeDrawer = useCallback(() => setSelectedId(undefined), []);
+  const selectCand = useCallback((candId: string) => {
+    setAutoplay(false);
+    setSelectedId(candId);
+  }, []);
+
+  const selected = candidates.find((c) => c.candId === selectedId);
+  const visit = visits.filter((v) => v.candId === selectedId).sort((a, b) => b.tUnix - a.tUnix)[0];
+  const analysis = analyses.filter((a) => a.candId === selectedId).sort((a, b) => b.tUnix - a.tUnix)[0];
+  const keyframe = latest(keyframes.filter((k) => k.stationId === selected?.stationId));
+  const pose = latest(poses);
+  const ticks: ScrubTick[] = [
+    ...t.poses.map((p) => ({ t: p.tUnix, kind: 'pose' as const })),
+    ...t.events.map((e) => ({ t: e.tUnix, kind: 'event' as const })),
+    ...t.analyses.map((a) => ({ t: a.tUnix, kind: 'sample' as const })),
+  ];
 
   return (
     <div className="app">
@@ -48,31 +141,75 @@ export default function App() {
       </header>
 
       <main className="map-area">
-        {/* MapView (P3, dashboard/src/map/) mounts here with MapViewProps (docs/06 §4). */}
-        <div className="map-placeholder">
-          <p><b>MapView (P3)</b> mounts here.</p>
-          <p className="meta">
-            {run ? `${run.runId} · ${run.status}${run.fused ? ' · fused' : ''}` : 'no run selected'}
-            {pose && ` · rover (${pose.x.toFixed(2)}, ${pose.y.toFixed(2)}) ${pose.headingDeg.toFixed(0)}°`}
-          </p>
-          <p className="meta">
-            {t.poses.length} poses · {t.localTiles.length} local tiles · {t.globalTiles.length} global tiles ·{' '}
-            {t.candidates.length} candidates · {t.visits.length} visits · {t.analyses.length} analyses
-          </p>
-        </div>
+        {MapView ? (
+          <MapView
+            mode={mode}
+            poses={poses}
+            localTiles={localTiles}
+            globalTiles={mode === 'replay' && run?.fused ? [...t.globalTiles] : []}
+            candidates={candidates}
+            visits={visits}
+            status={roverStatus?.runId === runId ? roverStatus : undefined}
+            selectedCandId={selectedId}
+            onSelectCand={selectCand}
+          />
+        ) : (
+          <div className="map-placeholder">
+            <p><b>MapView (P3)</b> mounts here.</p>
+            <p className="meta">
+              {run ? `${run.runId} · ${run.status}${run.fused ? ' · fused' : ''}` : 'no run selected'}
+              {pose && ` · rover (${pose.x.toFixed(2)}, ${pose.y.toFixed(2)}) ${pose.headingDeg.toFixed(0)}°`}
+            </p>
+            <p className="meta">
+              {poses.length} poses · {localTiles.length} local tiles · {t.globalTiles.length} global tiles ·{' '}
+              {candidates.length} candidates · {visits.length} visits · {analyses.length} analyses
+            </p>
+            <div className="pins">
+              {[...candidates].sort((a, b) => b.score - a.score).map((c) => (
+                <button key={c.candId} type="button" className={c.candId === selectedId ? 'on' : ''} onClick={() => selectCand(c.candId)}>
+                  {c.rank > 0 ? `#${c.rank} ` : ''}{c.candId} {c.score.toFixed(2)}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
       </main>
 
       <aside className="side">
         <MissionPanel missions={t.missions} live={live} fsmState={roverStatus?.runId === runId ? roverStatus?.fsmState : undefined} />
-        <TaskQueuePanel tasks={t.tasks} candidates={t.candidates} />
-        <KeyframePanel keyframes={t.keyframes} />
+        <TaskQueuePanel tasks={t.tasks} candidates={candidates} />
+        <KeyframePanel keyframes={keyframes} />
       </aside>
 
       <footer className="bottom">
+        {mode === 'replay' && run && (
+          <TimelineScrubber
+            start={bounds.start}
+            end={bounds.end}
+            scrubT={scrubT ?? bounds.end}
+            ticks={ticks}
+            playing={playing}
+            speed={speed}
+            onScrub={setScrub}
+            onPlaying={setPlaying}
+            onSpeed={setSpeed}
+          />
+        )}
         <QuickBar fsmState={roverStatus?.runId === runId ? roverStatus?.fsmState : undefined} live={live} />
-        <HealthPanel telemetry={t.telemetry} roverStatus={roverStatus?.runId === runId ? roverStatus : undefined} poses={t.poses} />
-        <EventLog events={t.events} />
+        <HealthPanel telemetry={telemetry} roverStatus={roverStatus?.runId === runId ? roverStatus : undefined} poses={poses} />
+        <EventLog events={events} />
       </footer>
+
+      {selected && (
+        <PinDetailDrawer
+          candidate={selected}
+          visit={visit}
+          analysis={analysis}
+          keyframe={keyframe}
+          autoplay={autoplay}
+          onClose={closeDrawer}
+        />
+      )}
     </div>
   );
 }
