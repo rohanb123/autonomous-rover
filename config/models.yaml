@@ -1,10 +1,13 @@
 # Owner: P3. Model choices for vision and ml (docs/03, P3 role doc). Everything else in config/ is P4's.
-# Values are placeholders until the early ARM64 smoke tests (docs/05 U-15) pick them.
 
 embedding:
-  open_clip_model: ""       # UNVERIFIED: ViT-B/16-class SigLIP or OpenAI CLIP that installs on ARM64 + CUDA
-  pretrained: ""
-  device: cuda
+  # SigLIP ViT-B/16 (open_clip "ViT-B-16-SigLIP" / "webli"), 768-d embeddings, 224 px input.
+  # Verified on the P3 laptop (x86_64, RTX 4060, torch 2.11 + CUDA 12.8) on 2026-10-24.
+  # UNVERIFIED on the GX10 (ARM64 + CUDA, docs/05 U-15). Fallback: device cpu (slower, same model).
+  # Changing the model means re-running ml/build_embeddings.py and ml/train_heads.py.
+  open_clip_model: ViT-B-16-SigLIP
+  pretrained: webli
+  device: cuda              # falls back to cpu automatically if CUDA isn't available
 
 heads_path: ml/models/heads.joblib
 category_priors_path: ml/models/category_priors.json
