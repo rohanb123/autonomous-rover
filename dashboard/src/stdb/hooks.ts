@@ -4,6 +4,7 @@
 import { useMemo } from 'react';
 import { useTable } from 'spacetimedb/react';
 import { tables } from '../module_bindings';
+import { rowsAt, type Timed } from './scrub';
 
 export function useGlobalTables() {
   const [runs, runsReady] = useTable(tables.run);
@@ -31,11 +32,8 @@ export function useRunTables(runId: string | undefined) {
 export type RunTables = ReturnType<typeof useRunTables>;
 
 /** Rows visible at scrub time `scrubT` (replay); every row when scrubT is undefined (live). */
-export function useScrubbed<R extends { tUnix: number }>(rows: readonly R[], scrubT: number | undefined): R[] {
-  return useMemo(
-    () => (scrubT === undefined ? [...rows] : rows.filter((r) => r.tUnix <= scrubT)),
-    [rows, scrubT]
-  );
+export function useScrubbed<R extends Timed>(rows: readonly R[], scrubT: number | undefined): R[] {
+  return useMemo(() => rowsAt(rows, scrubT), [rows, scrubT]);
 }
 
 /** The row with the largest tUnix, or undefined. */
