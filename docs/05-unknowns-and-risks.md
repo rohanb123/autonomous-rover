@@ -21,7 +21,7 @@ Everything here is **⚠️ UNVERIFIED** until its status says resolved. "Defaul
 | U-12 | ✅ **Resolved 2026-10-24** (local v2.13.0): yes, `ctx.sender.toHexString()` works; `claim_writer`/`add_writer` use it. Does server-side `Identity` have `toHexString()` in the TS module? | `writer` table key | Fallback: compare with `isEqual` over a stored identity column | Compile a 3-line reducer | P4 | by I1 |
 | U-13 | SuperCam observation log has an AEGIS flag? | Stretch: Perseverance priors | ChemCam (MSL) priors only | Open the PDS log | P3 | stretch |
 | U-14 | Terms of the mars.nasa.gov raw-image JSON feeds (unofficial) | Optional backdrop images | Don't depend on them; attribute NASA/JPL-Caltech if used | Read the site terms | P3 | optional |
-| U-15 | `open_clip_torch` + Ollama caption model (P3), `faster-whisper` + Ollama NLU model (P4) run on GX10 ARM64 + CUDA | Core vision + voice | CPU fallbacks; text-only missions | Early smoke tests | P3, P4 | by I1 |
+| U-15 | `open_clip_torch` + Ollama caption model (P3), `faster-whisper` (P4, offline voice backup only) run on GX10 ARM64 + CUDA | Core vision + offline voice | CPU fallbacks; text-only missions | Early smoke tests | P3, P4 | by I1 |
 | U-16 | chrony available on DGX OS | Clock sync for replay ordering | `timedatectl` / `systemd-timesyncd` to the GX10 | `apt policy chrony` | P4 | by I0 |
 | U-17 | **SpaceXSI / SpacetimeDB track rules** (what counts, judging criteria) | Scope priorities | Known only from the team brief: we use SpacetimeDB as the system of record and space data for training | Read the official track page with the organizers | P4 | before the event |
 | U-18 | Exact Kaggle slug for the AI4Mars mirror | Backup download only | Use the HF mirror | Search Kaggle | P3 | by I0 |
@@ -43,10 +43,11 @@ L = likelihood, I = impact (1–3). Score = L×I.
 | R5 | Wi-Fi dropouts at the venue | 2 | 3 | 6 | Own router; heartbeat watchdog stops motors; Pi local store + upload retry | > 1 drop / run → move router closer, 5 GHz | P4, P2 |
 | R6 | **Assay misread as real science** | 2 | 3 | 6 | "SIMULATED — proof of concept" in panel, chart title, drawer chip; reducer rejects `simulated=false`; README states it; never say "detected protein" | Any reviewer confusion → bigger banner | P3 |
 | R7 | AI4Mars download too large/slow | 2 | 2 | 4 | HF mirror subset (6.47 GB), start first thing or pre-download; MSL v2.1 (55 MB) alone suffices for core | Not done by I1 → drop the terrain head | P3 |
-| R8 | ARM64 library incompatibility (open_clip, faster-whisper, Ollama) | 2 | 2 | 4 | Early smoke tests; CPU fallbacks | Fails before I1 → CPU path / text-only | P3, P4 |
+| R8 | ARM64 library incompatibility (open_clip, faster-whisper, Ollama captions) | 2 | 2 | 4 | Early smoke tests; CPU fallbacks | Fails before I1 → CPU path / text-only | P3, P4 |
 | R9 | STDB API surprises (positional args, BigInt, bindings drift) | 2 | 2 | 4 | I0 test; regenerate bindings in `make up`; pinned v2.13.0 | I0 fails → Maincloud or named-arg fallback per docs | P4 |
 | R10 | Domain gap (Mars data vs arena) → bad rankings | 3 | 2 | 6 | Arena few-shot (×5 weight); priors still apply; novelty is domain-free | Arena accuracy < 50% → increase novelty weight | P3 |
 | R11 | Dashboard bandwidth from base64 tiles/keyframes | 1 | 2 | 2 | Size caps in reducers; per-run subscriptions; `keyframe_meta` view (stretch) | UI lag > 1 s → drop thumbs from live | P4 |
 | R12 | Contract drift between teams | 2 | 3 | 6 | `shared/py` pydantic for every message; change process in AGENTS.md; role-file copies | Any mismatch at a gate → fix the code to 00, not 00 to the code | P4 |
 | R13 | Clock skew → replay ordering wrong | 1 | 2 | 2 | chrony/timesyncd to the GX10 (U-16) | Skew > 50 ms → resync | P4 |
 | R14 | E-STOP doesn't stop in time | 1 | 3 | 3 | Bypasses the FSM queue; Pi latch calls `Motors.stop()` directly; physical kill switch | Test at every gate | P4, P2, P1 |
+| R15 | No internet at the venue → Grok voice unavailable | 2 | 2 | 4 | Offline backup: `faster-whisper` transcribes on the GX10, the regex parser covers the core fields (radius, k, categories, sample, return); typed missions always work | Grok timeouts at a gate → demo on the offline path; give the travel router a phone-hotspot uplink | P4 |

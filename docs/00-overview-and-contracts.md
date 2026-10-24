@@ -3,13 +3,13 @@
 > If code disagrees with this file, the code is wrong. Change process: [AGENTS.md §3](../AGENTS.md#3-changing-a-contract).
 
 ## 0. Version
-`CONTRACT_VERSION = 1.1.0` (2026-10-24: removed the Mars delay mode)
+`CONTRACT_VERSION = 1.2.0` (2026-10-24: removed the Mars delay mode in 1.1.0; mission parsing via Grok in 1.2.0)
 
 ## 1. System in one page
 
 **Mission loop:**
 
-1. **Uplink.** In the dashboard, the user speaks or types a mission. The brain parses it (ASR → LLM → `mission` JSON) and starts the run.
+1. **Uplink.** In the dashboard, the user speaks or types a mission. The brain parses it (Grok speech-to-text and parsing → `mission` JSON; offline backup: `faster-whisper` + regex) and starts the run.
 2. **Survey.** The brain makes a station plan: home, plus extra stations if the radius is > 0.8 m. At each station the rover runs `station`: it spins 8 × 45°, captures a keyframe at each heading, builds a BEV local tile, finds rock proposals, saves everything on the SD card, and uploads it to the mapper.
 3. **Score.** The brain sends proposal crops to vision `/score` and gets component scores. It computes the final score, dedupes, drops anything inside the visited exclusion radius, and pushes the rest into a min-heap. The heap is capped at k, so the root is the weakest of the current top-k.
 4. **Plan.** The brain pops the top-k and orders it with a nearest-neighbor route from the current pose.
@@ -104,8 +104,8 @@ ares-scout/
 │   │   ├── stdb_writer.py         rate-limited writes (poses, status) via StdbClient
 │   │   └── voice/                 P4  (ASR + NLU)
 │   │       ├── requirements.txt
-│   │       ├── asr.py             audio bytes → text (faster-whisper)
-│   │       └── nlu.py             text → Mission (Ollama JSON mode) + validation
+│   │       ├── asr.py             audio bytes → text (Grok STT; faster-whisper offline backup)
+│   │       └── nlu.py             text → Mission (Grok structured output, regex fallback) + validation
 │   ├── vision/                    P3
 │   │   ├── requirements.txt
 │   │   ├── app.py                 FastAPI :8100 /score /analyze /health
@@ -166,7 +166,7 @@ ares-scout/
 - **Python deps.** Each service dir has its own `requirements.txt`, owned by that dir's owner. There's no shared GX10 dependency file.
 - **Dashboard deps and styles.** `dashboard/package.json` and `src/styles.css` are P4's. P3 components only *read* the CSS variables, and keep their own styles in `map/map.css` / `assay/assay.css`. If P3 needs an npm dep, they request it in `docs/requests/` (doc 06 aims for no extra deps).
 - **Dashboard ↔ map/assay.** `MapViewProps` and `BradfordPanelProps` (doc 06 §4) are the whole interface. P4 renders the components and passes rows; P3 never opens an STDB connection.
-- **Model config.** `config/models.yaml` (vision/ML models) is P3's, and the only P3 file in `config/`. Voice settings (ASR size, NLU model) live in `config/run.yaml` (P4).
+- **Model config.** `config/models.yaml` (vision/ML models) is P3's, and the only P3 file in `config/`. Voice settings (ASR size, Grok model) live in `config/run.yaml` (P4).
 - **Arena photos.** P1 captures and labels them into `ml/data/arena/`. That's gitignored data, not repo files, in the layout docs/03 defines. P3 owns `arena_fewshot.py`, which consumes them.
 - **Runtime `data/`.** The mapper (P3) owns the `data/runs/<run>/` layout. `eventlog.py` (P4) only appends `events.jsonl` in it.
 
@@ -176,7 +176,7 @@ Travel router **SSID `marsnet`**, subnet `192.168.50.0/24`, gateway `192.168.50.
 
 | Host | IP | Link | Notes |
 |---|---|---|---|
-| Router | 192.168.50.1 | — | No internet required at runtime |
+| Router | 192.168.50.1 | — | Internet uplink optional (e.g. phone hotspot as the router's WAN) for Grok voice; everything else is LAN-only |
 | GX10 | 192.168.50.10 | Ethernet to router | All services; datasets pre-downloaded |
 | Pi (rover) | 192.168.50.20 | Wi-Fi | Hostname `rover.local` as backup |
 | Laptop (dashboard) | 192.168.50.30 | Wi-Fi | Browser + `npm run dev` |
@@ -190,7 +190,8 @@ Travel router **SSID `marsnet`**, subnet `192.168.50.0/24`, gateway `192.168.50.
 | 8200 | GX10 | mapper `/ingest/*` `/fuse/*` `/files/*` | HTTP | P3 |
 | 8300 | GX10 | overhead `/pose` | WebSocket JSON | P2 |
 | 3000 | GX10 | SpacetimeDB standalone (`spacetime start --listen-addr 0.0.0.0:3000`) | HTTP + WS | P4 |
-| 11434 | GX10 | Ollama | HTTP | P3 (model choice) |
+| 11434 | GX10 | Ollama (optional captions only) | HTTP | P3 (model choice) |
+| 443 | api.x.ai | Grok API: speech-to-text + mission parsing (internet; offline backup on the GX10) | HTTPS | P4 |
 | 5173 | Laptop | dashboard dev server (Vite default) | HTTP | P4 |
 
 CORS: brain, mapper and vision allow origin `http://192.168.50.30:5173` and `http://localhost:5173`.

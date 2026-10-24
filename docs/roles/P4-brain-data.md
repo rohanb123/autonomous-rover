@@ -13,7 +13,7 @@ Own the **decision loop** and the **single source of truth**: the brain service 
 | README, AGENTS, CLAUDE.md, docs 00/02/04/05/06/sources/TEAM | docs 01 (P1), 03 (P3), other role files |
 
 ## 3. Hardware / environment
-GX10 at 192.168.50.10 (Ethernet), travel router `marsnet`, dashboard laptop .30. SpacetimeDB **v2.13.0 standalone** (ARM64 build exists) on :3000; Node 20+ for the module and dashboard; Python 3.11+ (`fastapi`, `uvicorn`, `websockets`, `httpx`, `pydantic` v2, `numpy`, `faster-whisper` ⚠️ ARM64/CUDA wheel, CPU `int8` fallback). No physical parts.
+GX10 at 192.168.50.10 (Ethernet), travel router `marsnet`, dashboard laptop .30. SpacetimeDB **v2.13.0 standalone** (ARM64 build exists) on :3000; Node 20+ for the module and dashboard; Python 3.11+ (`fastapi`, `uvicorn`, `websockets`, `httpx`, `pydantic` v2, `numpy`, `faster-whisper` ⚠️ ARM64/CUDA wheel, CPU `int8` fallback, `openai` SDK for Grok). Internet at the venue for Grok voice; the offline backup needs none. No physical parts.
 
 ## 4. Files and function signatures
 ```python
@@ -25,10 +25,10 @@ stdb_http.py: class StdbClient; class RateLimitedWriter   (02 §8)
 eventlog.py: def log(run_id: str, src: str, level: str, kind: str, msg: str, data: dict | None = None) -> None   # data/runs/<run>/events.jsonl
 
 # gx10/brain/voice/asr.py
-def transcribe(audio: bytes, mime: str = "audio/webm") -> str        # ffmpeg → 16 kHz wav → faster-whisper (small/base, en)
+def transcribe(audio: bytes, mime: str = "audio/webm") -> str        # Grok STT (POST /v1/stt, keyterms); offline: ffmpeg → 16 kHz wav → faster-whisper
 
 # gx10/brain/voice/nlu.py
-def parse_mission(text: str, run_id: str, defaults: dict) -> dict     # → Mission (00 §6.1) + assumptions; Ollama JSON mode; regex fallback
+def parse_mission(text: str, run_id: str, defaults: dict) -> dict     # → Mission (00 §6.1) + assumptions; Grok structured output, regex fallback
 def parse_quick(text: str) -> str | None                              # "stop"/"pause"/… if the utterance is a quick command
 
 # gx10/brain/scoring.py
@@ -97,7 +97,7 @@ Commands from the dashboard run in order through the FSM. `stop` and E-STOP skip
 | by I1 | All 15 tables + reducers + bindings; brain app, RoverLink, FSM skeleton (SURVEY only), BrainDb; dashboard shell + ConnectionBadge + EStop + QuickBar + MissionPanel (text) | **I1:** text mission → fake_rover station → candidates in STDB → TaskQueuePanel |
 | by I2 | scoring, dedupe, TopK, nn_route, visited; INVESTIGATE with fake_rover/fake_vision; overhead_link | **I2:** full campaign on mocks; E-STOP immediate (06 D4) |
 | by I3 | Real rover integration with P2; remaining panels; TimelineScrubber + PinDetailDrawer; replay_run | **I3:** real rover runs a mission end to end; replay works |
-| by I4 | Voice: test `faster-whisper` + the Ollama NLU model on the GX10 (U-15), asr + nlu with 10 test utterances (8/10 parse to the expected Mission), wiring; suggest mode; failure paths (empty scoop, unreachable, link loss) | **I4:** voice mission; 3 sampled pins with Bradford panel in replay |
+| by I4 | Voice: Grok STT + Grok parsing with your xAI key, then the offline path (`faster-whisper` on the GX10, U-15, + regex) with the network cut; asr + nlu with 10 test utterances (8/10 parse to the expected Mission), wiring; suggest mode; failure paths (empty scoop, unreachable, link loss) | **I4:** voice mission; 3 sampled pins with Bradford panel in replay |
 | by I5 | Soak tests (3 consecutive runs), `reset_db.sh`, docs updated to as-built | **I5 freeze** |
 
 **Acceptance:** 02 §12 (STDB 1–6), 06 D1–D6, plus brain unit tests: `test_scoring.py` (golden numbers from 00 §8), `test_topk.py` (heap keeps the k best under random insert order), `test_dedupe.py`, `test_visited.py`, `test_route.py`, `test_stop.py` (stop/estop bypass the FSM queue), `test_fsm.py` (scripted fake_rover run reaches DONE; estop from every state → ESTOP).
@@ -109,7 +109,8 @@ Commands from the dashboard run in order through the FSM. `stop` and E-STOP skip
 ## 9. Watch-outs
 - **Never block the control loop on STDB** (queue + rate limit; events.jsonl backup).
 - E-STOP path: dashboard → `/api/estop` → `RoverLink.estop()` directly, no FSM lock. Test it every milestone.
-- Ollama JSON can still be invalid → validate with pydantic, fall back to the regex parser, and list assumptions.
+- Grok needs internet: on timeout (`asr_timeout_s` / `nlu_timeout_s`) or any API error, fall back to `faster-whisper` / the regex parser, list what it assumed, and log which path ran (`event` kind `voice_offline`). Always validate Grok's output with the `Mission` pydantic model too, and clamp to the 00 §6.1 ranges.
+- `XAI_API_KEY` lives in `config/.env` only. Never log it or send it to the dashboard.
 - Heartbeats must keep flowing while the FSM awaits long ops, or the Pi stops mid-drive.
 - After every schema change: republish (`--delete-data=always` in dev), rerun `claim_writer`/`add_writer`, regenerate bindings.
 - Rank updates can flood `upsert_candidate`; only write rows whose rank/status changed.
@@ -117,7 +118,7 @@ Commands from the dashboard run in order through the FSM. `stop` and E-STOP skip
 - You approve contract changes; bump `CONTRACT_VERSION` and update every role file's contract copy.
 
 ## 10. Contracts you need (copies; source of truth = [00](../00-overview-and-contracts.md))
-**Ports:** brain :8000 (yours), STDB :3000 (yours), vision :8100, mapper :8200, overhead WS :8300/pose, Pi WS :8765/rover, Ollama :11434, dashboard :5173.
+**Ports:** brain :8000 (yours), STDB :3000 (yours), vision :8100, mapper :8200, overhead WS :8300/pose, Pi WS :8765/rover, Grok `https://api.x.ai/v1`, dashboard :5173.
 **Rover ops:** `start_run, drive{dist_m,speed}, turn{deg,speed}, stop, estop, clear_estop, set_pose{x,y,heading_deg,source}, station{station_id,n_views:8,step_deg:45}, approach{cand_id,x,y}, scoop{sample_id}, dump, scoop_pose{pose}, snapshot, heartbeat`; replies `ack` (≤ 0.5 s) / `done{result}` / `err{code}`; codes `E_ESTOP E_BUSY E_TIMEOUT E_BAD_ARGS E_TILT E_CAMERA E_LOST_TARGET E_UPLOAD E_SCOOP E_INTERNAL`. Timeouts: station 60 s, approach 45 s, scoop 30 s. Heartbeat 0.25 s.
 **REST (yours):** `POST /api/run/start, /api/run/end, /api/mission/voice (audio/webm), /api/mission/text {text}, /api/approve {mission_id, approve}, /api/quick {cmd}, /api/estop, /api/estop/clear`, `GET /api/health`; every command returns `{accepted, cmd_uid}`. `stop` and estop bypass the FSM queue.
 **Scoring:** `score = 0.35·novelty + 0.25·visual + 0.15·pickable + 0.15·category_score − 0.10·min(dist/radius,1)`; dedupe ≤ 0.15 m & cos ≥ 0.85, or ≤ 0.06 m; exclusion radius 0.20 m; min-heap capped at k; NN route recomputed after each visit; reason ≤ 140 chars.

@@ -53,6 +53,7 @@ Everything in this spec that is a fact (not a design choice) comes from one of t
 | Pololu D24V22F6 ($27.95) / D24V22F5 #2858 ($26.95) / D36V50F6 #4092 ($39.95) | https://www.pololu.com/product/2859 · https://www.pololu.com/product/2858 · https://www.pololu.com/product/4092 |
 | ASUS Ascent GX10 tech specs | https://www.asus.com/us/networking-iot-servers/desktop-ai-supercomputer/ultra-small-ai-supercomputers/asus-ascent-gx10/techspec/ |
 | pigpio does not support Pi 5 | https://github.com/joan2937/pigpio/issues/589 |
+| xAI Grok API: models, OpenAI-compatible base URL, structured outputs, speech-to-text | https://docs.x.ai/docs/models, https://docs.x.ai/docs/guides/structured-outputs, https://docs.x.ai/developers/model-capabilities/audio/speech-to-text |
 
 ## Not verified from a primary source
 - SpaceXSI track rules: known only from the team brief (U-17).

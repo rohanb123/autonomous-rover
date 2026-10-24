@@ -24,7 +24,7 @@ Ares Scout takes the same idea a few steps further, at hackathon scale:
 
 ## Features
 
-- 🎙️ **Voice missions**: push-to-talk in the dashboard → ASR → LLM → a validated `mission` JSON. Text input is the fallback.
+- 🎙️ **Voice missions**: push-to-talk in the dashboard → **Grok (xAI)** transcribes it and parses it into a validated `mission` JSON with structured outputs. Text input works too. **Offline backup:** if Grok is unreachable, `faster-whisper` transcribes locally on the GX10 and a regex parser extracts the mission.
 - 🔄 **Autonomous look-around**: rotate-in-place survey stations (8 × 45°) with one fixed camera. There is no head tracking and no pan servo ([why](docs/01-hardware-and-assembly.md#look-around-decision)).
 - 🗺️ **Local maps on the rover**: each station produces keyframes, a bird's-eye-view (BEV) ground tile, a pose and rock proposals. These are stored on the Pi's SD card and uploaded to the GX10.
 - 🌍 **Global map on the GX10**: pose-graph-refined fusion of all station tiles into a global mosaic. The mosaic is stored in SpacetimeDB and rendered in the dashboard.
@@ -48,12 +48,12 @@ flowchart LR
   end
   subgraph GX10["🖥️ ASUS Ascent GX10 192.168.50.10"]
     BRAIN["brain :8000<br/>mission FSM, planner, heap,<br/>dedupe, rover link"]
-    VOICE["voice (in brain proc)<br/>ASR + NLU → mission JSON"]
+    VOICE["voice (in brain proc)<br/>Grok STT + parse → mission JSON<br/>offline: faster-whisper + regex"]
     VISION["vision :8100<br/>embeddings, heads, novelty,<br/>analyze (black box) + Bradford sim"]
     MAPPER["mapper :8200<br/>station ingest, file store,<br/>global fusion, tiles"]
     OVER["overhead :8300<br/>ArUco fallback pose"]
     STDB[("SpacetimeDB :3000<br/>module 'marsrover' (TS)")]
-    OLLAMA["Ollama :11434"]
+    OLLAMA["Ollama :11434<br/>(optional captions)"]
   end
   subgraph Rover["🤖 Rover: Raspberry Pi 192.168.50.20"]
     RT["rover runtime<br/>WS :8765 /rover, snapshot :8080<br/>motion, scoop, IMU, camera,<br/>station capture, BEV, proposals,<br/>local store"]
@@ -64,7 +64,8 @@ flowchart LR
   BRAIN <-- "WS cmd/ack/done/telemetry" --> RT
   RT -- "POST /ingest/station, /ingest/sample" --> MAPPER
   BRAIN -- "/score, /analyze" --> VISION
-  BRAIN --> VOICE --> OLLAMA
+  BRAIN --> VOICE -- "HTTPS (needs internet)" --> GROK[("xAI Grok API")]
+  VISION -. "captions (optional)" .-> OLLAMA
   OVER -- "pose WS" --> BRAIN
   BRAIN -- "HTTP /v1/database/marsrover/call/*" --> STDB
   MAPPER -- "HTTP call reducers" --> STDB
