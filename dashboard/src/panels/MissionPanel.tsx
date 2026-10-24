@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { brain } from '../api/brain';
+import VoiceButton from './VoiceButton';
 import type { Mission } from '../module_bindings/types';
 
 interface Params { radius_m?: number; k?: number; categories?: string[]; mode?: string; }
@@ -9,7 +10,7 @@ function parse<T>(json: string, fallback: T): T {
 }
 
 // Latest mission with parsed params and assumptions; text box sends a mission (docs/06 §5).
-// VoiceButton (push-to-talk) mounts next to the text box later.
+// Push-to-talk (VoiceButton) sits next to the text box.
 export default function MissionPanel({ missions, live }: { missions: readonly Mission[]; live: boolean }) {
   const m = [...missions].sort((a, b) => b.missionId.localeCompare(a.missionId))[0]; // m_0002 > m_0001
   const p = m ? parse<Params>(m.paramsJson, {}) : {};
@@ -41,6 +42,7 @@ export default function MissionPanel({ missions, live }: { missions: readonly Mi
         <input value={text} disabled={!live} placeholder="Type a mission…" onChange={(e) => setText(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && send()} />
         <button disabled={!live || !text.trim()} onClick={send}>Send</button>
+        <VoiceButton disabled={!live} onError={setErr} />
       </div>
       {err && <p className="error">{err}</p>}
     </section>

@@ -1,7 +1,8 @@
 """ID generators (AGENTS.md §4, doc 00 §5).
 
-The brain mints r_ m_ t_ c_ v_ a_ (plus q_ command ids); the Pi mints s_ k_ p_.
-IDs are unique within a run and zero-padded to 4 digits. Command ids use 6 digits,
+The brain mints r_ m_ t_ c_ v_ a_ (plus q_ rover command ids and u_ dashboard command
+uids); the Pi mints s_ k_ p_.
+IDs are unique within a run and zero-padded to 4 digits. Command ids (q_, u_) use 6 digits,
 matching the doc 00 §6.2 example (`q_000123`).
 """
 
@@ -11,8 +12,8 @@ import re
 import threading
 from datetime import datetime
 
-PREFIXES = frozenset("mskpctvaq")
-WIDTH = {"q": 6}
+PREFIXES = frozenset("mskpctvaqu")
+WIDTH = {"q": 6, "u": 6}
 _ID_RE = re.compile(r"^([a-z])_(\d+)$")
 
 

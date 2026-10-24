@@ -30,6 +30,8 @@ def transcribe(audio: bytes, mime: str = "audio/webm") -> str        # Grok STT 
 # gx10/brain/voice/nlu.py
 def parse_mission(text: str, run_id: str, defaults: dict) -> dict     # → Mission (00 §6.1) + assumptions; Grok structured output, regex fallback
 def parse_quick(text: str) -> str | None                              # "stop"/"pause"/… if the utterance is a quick command
+# Both modules also expose *_ex variants returning (result, source), source = "grok" | "regex" | "faster-whisper".
+# parse_mission takes an optional mission_id; asr raises AsrUnavailable when neither path works.
 
 # gx10/brain/scoring.py
 def final_score(c: dict, mission: Mission, priors: dict[str, float], pose: Pose) -> tuple[float, dict]   # (score, components)

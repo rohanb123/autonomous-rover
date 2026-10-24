@@ -67,3 +67,4 @@ input, select { font: inherit; color: var(--text); background: #0d0b0a; border: 
 .eventlog ul { margin: 0; padding: 0; list-style: none; max-height: 140px; overflow-y: auto; font: 12px/1.5 var(--mono); }
 .eventlog .time, .eventlog .src { color: var(--muted); }
 .lvl-warn { color: var(--warn); } .lvl-error { color: var(--bad); }
+.voice.recording { background: var(--bad); color: #fff; }
