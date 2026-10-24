@@ -95,3 +95,21 @@ Reproduce: `python ml/build_embeddings.py && python ml/train_heads.py && python 
 - MSL v2.1 and AI4Mars: CC-BY-4.0 → attribute in README and the dashboard "About".
 - MSL v1: CC-BY-SA-4.0. If used, models trained on it are fine; **don't redistribute the images** in our repo.
 - No dataset images are committed to git (`ml/data/` is gitignored).
+
+## 7. Getting the model files (any machine that runs vision or the brain) <a id="model-files"></a>
+The vision service (`uvicorn vision.app:app`) refuses to start without `ml/models/heads.joblib` and the embedding weights, and the brain reads `ml/models/category_priors.json`. None of these are in git (`ml/models/`, `ml/data/` and the Hugging Face cache are local), so every machine needs one of:
+
+**A. Build them** (needs internet once):
+```
+python ml/setup_models.py                  # MSL + ChemCam (~80 MB) + SigLIP weights (~800 MB), a few minutes
+python ml/setup_models.py --with-ai4mars   # also AI4Mars (6.5 GB) for the real terrain head
+```
+It skips any step whose output already exists (`--force` redoes embeddings, heads and priors). Without AI4Mars the heads version ends in `+derived-terrain`: terrain is the most likely category mapped to a terrain class (sand→sand, bedrock/layered/veined→bedrock, pebble→soil, float_rock→big_rock). Fine for testing; use `--with-ai4mars` for real runs.
+
+**B. Copy a bundle** (no internet needed on the target, e.g. the GX10 at the venue):
+```
+python ml/package_models.py pack                        # on a machine that has the files -> ml/dist/marsrover-models.zip (~800 MB)
+python ml/package_models.py unpack marsrover-models.zip # on the target: checks sha256, fills ml/models/ and the HF cache
+HF_HUB_OFFLINE=1 uvicorn vision.app:app --port 8100     # offline: never try to download
+```
+`VISION_HEADS_PATH` points the vision service at a heads file outside `ml/models/` if needed.

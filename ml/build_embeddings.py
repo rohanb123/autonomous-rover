@@ -194,16 +194,18 @@ def main() -> None:
     ap.add_argument("--batch", type=int, default=64)
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--out", type=Path, default=OUT_DIR)
+    ap.add_argument("--msl-dir", type=Path, default=MSL_DIR)
+    ap.add_argument("--ai4mars-dir", type=Path, default=AI4MARS_DIR)
     args = ap.parse_args()
 
     t0 = time.time()
     emb = Embedder(args.model, args.pretrained, args.device)
     print(f"model {emb.name} on {emb.device} ({time.time() - t0:.0f}s to load)", flush=True)
     if args.only in (None, "msl"):
-        save(args.out / "msl_v21.npz", build_msl(emb, MSL_DIR, args.batch), emb, {})
+        save(args.out / "msl_v21.npz", build_msl(emb, args.msl_dir, args.batch), emb, {})
     if args.only in (None, "ai4mars"):
         arrays = build_ai4mars(
-            emb, AI4MARS_DIR, args.ai4mars_images, args.crops_per_image, args.batch, args.seed
+            emb, args.ai4mars_dir, args.ai4mars_images, args.crops_per_image, args.batch, args.seed
         )
         extra = {
             "classes": TERRAIN_CLASSES,

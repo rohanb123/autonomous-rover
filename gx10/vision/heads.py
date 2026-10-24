@@ -5,6 +5,10 @@ regressions plus the name of the embedding model they were trained on:
   visual    P(science-interesting)                  -> /score `visual`
   category  float_rock layered veined sand bedrock pebble -> /score `category_probs`
   terrain   soil bedrock sand big_rock               -> /score `terrain`
+
+The terrain head needs the AI4Mars crops. When they weren't available at training time the
+bundle stores `terrain: None` and terrain is *derived* from the category head instead
+(CATEGORY_TO_TERRAIN below); the heads version then ends in "+derived-terrain".
 """
 
 from __future__ import annotations
@@ -19,6 +23,15 @@ DEFAULT_PATH = REPO / "ml" / "models" / "heads.joblib"
 CATEGORIES = ("float_rock", "layered", "veined", "sand", "bedrock", "pebble")
 TERRAINS = ("soil", "bedrock", "sand", "big_rock")
 FORMAT = 1
+# Fallback when no AI4Mars terrain head was trained: most likely category -> terrain.
+CATEGORY_TO_TERRAIN = {
+    "sand": "sand",
+    "bedrock": "bedrock",
+    "layered": "bedrock",
+    "veined": "bedrock",
+    "pebble": "soil",
+    "float_rock": "big_rock",
+}
 
 
 class HeadsMismatch(ValueError):
@@ -56,6 +69,11 @@ class Heads:
     def name(self) -> str:
         return self.version or "heads"
 
+    @property
+    def terrain_derived(self) -> bool:
+        """True when terrain comes from the category head (no AI4Mars terrain head)."""
+        return self._terrain is None
+
     def visual(self, emb: np.ndarray) -> np.ndarray:
         """(n,) P(science-interesting)."""
         p = self._visual.predict_proba(_as2d(emb))
@@ -70,6 +88,8 @@ class Heads:
         ]
 
     def terrain(self, emb: np.ndarray) -> list[str]:
+        if self._terrain is None:
+            return [CATEGORY_TO_TERRAIN[max(p, key=p.get)] for p in self.category_probs(_as2d(emb))]
         idx = self._terrain.predict(_as2d(emb))
         return [self.terrain_names[int(i)] for i in idx]
 
