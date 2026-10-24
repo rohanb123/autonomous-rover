@@ -50,9 +50,12 @@
 `ml/chemcam_priors.py`:
 1. Load `msl_ccam_obs.csv` (pandas; column names per `msl_ccam_obs.lbl`).
 2. Split rows: `aegis = Target Type contains "AEGIS"` (variants "AEGIS selected bedrock" 3,417, "AEGIS-selected bedrock" 2,568, …) or Target name starts `aegis_`; `human = rest`, excluding calibration/sky (`Passive Sky` 5,808, `Calibration Target` 4,137).
-3. Map Target Type → our categories with a keyword table (`Bedrock`→bedrock, `Float Rock`→float_rock, `Soil`→pebble/soil, `Outcrop`→layered, vein keywords in Comments→veined ⚠️ keyword list to be checked by eye).
+3. Map Target Type → our categories with an ordered keyword table (`TYPE_RULES` in the script): `Bedrock`→bedrock, `Float Rock`/`Boulder`/`Broken Rock`→float_rock, `Soil`/`Pebble`→pebble, `Outcrop`/layer words→layered, `Sand`/dune/ripple→sand, `Vein` (or vein words in Comments on bedrock/unmapped targets)→veined. Excluded: sky, calibration targets (incl. CCCT, magnets), drill holes/tailings, mosaics and long-distance shots, hardware. Unmapped (left out of the shares): the generic `Rock` and blind targets (mixed rock and soil). Reviewed by eye by P3 on 2026-10-24 (`python ml/chemcam_priors.py --report`).
 4. **Count unique targets** per category (not shots, since one target gets many LIBS points), for human and AEGIS separately.
-5. `prior[c] = 0.7·share_human[c] + 0.3·share_aegis[c]`, normalized so max = 1. Write `ml/models/category_priors.json` with both raw shares (the dashboard can show "scientists picked float rocks X% of the time").
+5. `raw[c] = 0.7·share_human[c] + 0.3·share_aegis[c]`, normalized so max = 1, then **`prior[c] = raw[c] ** 0.5`** (square-root flattening, P3 decision 2026-10-24). Bedrock is ~6× every other category in the human shares and ~98% of AEGIS picks, so unflattened priors (bedrock 1.0, everything else ≤ 0.12) would make `category_score` ignore all but bedrock, including the pebbles the rover can scoop. Flattening keeps the scientists' ranking.
+6. Outputs: `ml/models/category_priors.json` = flat `{category: prior}` (exactly what the brain's `vision_client.load_priors` reads); `ml/models/category_priors_detail.json` = human/AEGIS counts and shares, raw and flattened priors, the rules used (the dashboard can show "scientists picked float rocks X% of the time").
+
+Result (mapping `chemcam-priors-2`): bedrock 1.00 · layered 0.34 · veined 0.30 · float_rock 0.29 · pebble 0.28 · sand 0.17 (from 1,894 / 367 / 272 / 265 / 246 / 89 human targets).
 
 Top target types in the file (rows): Bedrock 22,252 · Rock 8,264 · Passive Sky 5,808 · Calibration Target 4,137 · Soil 2,296 · Float Rock 1,724 · Outcrop 1,642.
 
@@ -76,7 +79,7 @@ Top target types in the file (rows): Bedrock 22,252 · Rock 8,264 · Passive Sky
 ## 5. Acceptance (P3)
 - `metrics.json`: visual head AUC on MSL v2.1 test **≥ 0.80** (target; if lower, still ship and report it).
 - Category head macro-F1 reported; arena hold-out (≥ 20 images) accuracy reported, not gated.
-- `category_priors.json` exists with human and AEGIS shares and the counts used.
+- `category_priors.json` (flat priors) and `category_priors_detail.json` (human and AEGIS shares and the counts used) exist.
 - `vision /score` latency < 300 ms for 10 crops on the GX10.
 
 ## 6. Licenses and attribution (put in README credits at the end)
