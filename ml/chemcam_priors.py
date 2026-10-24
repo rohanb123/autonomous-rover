@@ -14,9 +14,16 @@ Method (docs/03 §3):
    stays UNMAPPED (e.g. the generic "Rock").
 3. Count unique targets per category, not shots: a target's category is its most common row
    category; human and AEGIS targets are counted separately.
-4. prior[c] = 0.7·share_human[c] + 0.3·share_aegis[c], scaled so the largest prior is 1.0.
+4. raw[c] = 0.7·share_human[c] + 0.3·share_aegis[c], scaled so the largest is 1.0.
+5. prior[c] = raw[c] ** 0.5 (square-root flattening, P3 decision 2026-10-24). Bedrock is ~6×
+   every other category in the raw shares (and ~98% of AEGIS picks), so unflattened priors
+   would make the category term ignore everything but bedrock, including the pebbles the
+   rover can actually scoop. Flattening keeps the scientists' ranking. raw is kept in the
+   detail file.
 
-UNVERIFIED: the keyword rules are a first pass; docs/03 asks for a check by eye (see --report).
+Mapping decisions reviewed by P3 (2026-10-24): generic "Rock" stays unmapped; blind targets
+are unmapped (mixed rock and soil); "Soil" counts as pebble (docs/03); "Boulder" and
+"Broken Rock" count as float_rock (loose surface rocks).
 
 Usage:  python ml/chemcam_priors.py [--csv PATH] [--out DIR] [--report]
 """
@@ -39,7 +46,8 @@ CATEGORIES = ("float_rock", "layered", "veined", "sand", "bedrock", "pebble")
 EXCLUDED = "excluded"
 UNMAPPED = "unmapped"
 HUMAN_WEIGHT, AEGIS_WEIGHT = 0.7, 0.3
-MAPPING_VERSION = "chemcam-priors-1"
+FLATTEN_EXPONENT = 0.5  # prior = raw ** 0.5; 1.0 would be docs/03's unflattened formula
+MAPPING_VERSION = "chemcam-priors-2"
 
 # Ordered: the first rule whose pattern matches the lower-cased Target Type wins.
 TYPE_RULES: list[tuple[str, str]] = [
@@ -48,11 +56,13 @@ TYPE_RULES: list[tuple[str, str]] = [
     (r"rmi (mosaic|observation)|long[- ]distance|distant|mosaic|landscape|horizon", EXCLUDED),
     (r"drill|tailing|dump pile|brush|\bdrt\b|scuff|wheel|rover|hardware|sieve|turret", EXCLUDED),
     (r"meteorite", EXCLUDED),
+    # Blind targets mix rock and soil: no single category.
+    (r"blind target", UNMAPPED),
     # Rock types.
     (r"vein|fracture fill", "veined"),
     (r"\bsand\b|dune|ripple|\bdrift\b", "sand"),
     (r"pebble|\bsoil\b|regolith|granule|gravel", "pebble"),
-    (r"\bfloat\b", "float_rock"),
+    (r"\bfloat\b|boulder|broken rock", "float_rock"),
     (r"outcrop|layer|laminat|stratif|cross[- ]?bed", "layered"),
     (r"bedrock", "bedrock"),
 ]
@@ -123,7 +133,9 @@ def compute(df: pd.DataFrame) -> dict:
         for c in CATEGORIES
     }
     top = max(raw.values()) or 1.0
-    result["priors"] = {c: round(raw[c] / top, 4) for c in CATEGORIES}
+    result["raw_priors"] = {c: round(raw[c] / top, 4) for c in CATEGORIES}
+    result["priors"] = {c: round((raw[c] / top) ** FLATTEN_EXPONENT, 4) for c in CATEGORIES}
+    result["flatten_exponent"] = FLATTEN_EXPONENT
     result["weights"] = {"human": HUMAN_WEIGHT, "aegis": AEGIS_WEIGHT}
     result["type_rules"] = TYPE_RULES
     result["vein_comment_pattern"] = VEIN_COMMENT.pattern
