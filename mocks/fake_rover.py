@@ -34,6 +34,11 @@ Example client (every reply validates as a `marsrover_shared.schemas` model):
 
     asyncio.run(main())
 
+The WS protocol itself is not a copy: this imports `rover/rover/ws_server.py`, the same
+dispatch, telemetry loop and heartbeat watchdog the real Pi runs, and injects `Sim` as its
+backend. So a contract test that passes here passes against the Pi, and the two can't drift.
+Only the physics, the imagery and the uploads below are simulated.
+
 Differences from the real Pi, all deliberate: there is no :8080 snapshot server (`snapshot`
 returns the documented URL without serving it), `turn` always reports `method:"gyro"`, and
 `--no-upload` fabricates the mapper reply. Everything on the wire is the real contract.
@@ -45,7 +50,6 @@ import argparse
 import asyncio
 import contextlib
 import io
-import json
 import logging
 import math
 import random
@@ -56,21 +60,17 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "shared" / "py"))  # works without an install (macOS .pth issue)
+# Both work without an install (macOS .pth issue), so P3/P4 can run this from a bare checkout.
+sys.path.insert(0, str(ROOT / "shared" / "py"))
+sys.path.insert(0, str(ROOT / "rover"))
 
 import httpx  # noqa: E402
-import websockets  # noqa: E402
 from PIL import Image, ImageChops, ImageDraw  # noqa: E402
-from websockets.asyncio.server import ServerConnection, serve  # noqa: E402
 
 from marsrover_shared.frames import mission_to_rover, rover_to_mission, wrap_deg  # noqa: E402
 from marsrover_shared.ids import IdGen  # noqa: E402
 from marsrover_shared.schemas import (  # noqa: E402
-    Ack,
     Bev,
-    Cmd,
-    Done,
-    Err,
     ErrCode,
     Event,
     Imu,
@@ -88,29 +88,28 @@ from marsrover_shared.schemas import (  # noqa: E402
     StationUrls,
     Telemetry,
 )
+from rover import ws_server  # noqa: E402
+from rover.ws_server import EventBus, OpError  # noqa: E402
 
 log = logging.getLogger("fake_rover")
 
-# --- contract constants (doc 00 section 4; these are the contract, don't tune them) --------
+# --- contract constants ---------------------------------------------------------------------
+# Re-exported from the real protocol layer, never redefined: the mock and the Pi cannot
+# disagree about the ack budget or an op deadline. Same objects, so a test that does
+# monkeypatch.setitem(fake_rover.OP_TIMEOUT_S, "scoop", 0.05) still patches the live dict.
 
-ACK_BUDGET_S = 0.5  # an ack must be on the wire within this
-TELEMETRY_HZ = 5.0
-WATCHDOG_HZ = 20.0
-HEARTBEAT_TIMEOUT_S = 1.0  # no heartbeat for this long *while moving* -> stop the motors
-BEV_RES_M_PX = 0.005
+ACK_BUDGET_S = ws_server.ACK_BUDGET_S
+TELEMETRY_HZ = ws_server.TELEMETRY_HZ
+WATCHDOG_HZ = ws_server.WATCHDOG_HZ
+HEARTBEAT_TIMEOUT_S = ws_server.HEARTBEAT_TIMEOUT_S
+OP_TIMEOUT_S = ws_server.OP_TIMEOUT_S
+SNAPSHOT_URL = ws_server.SNAPSHOT_URL
+IMMEDIATE_OPS = ws_server.IMMEDIATE_OPS
+ESTOP_EXEMPT_OPS = ws_server.ESTOP_EXEMPT_OPS
+MOVING_STATES = ws_server.MOVING_STATES
+
+BEV_RES_M_PX = 0.005  # doc 00 section 4
 BEV_PX = 360
-# Per-op done deadlines. Read at dispatch time so a test can shrink them.
-OP_TIMEOUT_S: dict[str, float] = {"station": 60.0, "approach": 45.0, "scoop": 30.0}
-# Doc 00 section 3: the real Pi serves this; fake_rover only hands the URL out.
-SNAPSHOT_URL = "http://192.168.50.20:8080/snapshot.jpg"
-
-# Ops answered on the reader loop, so they land even while a long op runs (P2 role doc 9).
-IMMEDIATE_OPS = frozenset({"heartbeat", "estop", "stop", "clear_estop", "set_pose", "snapshot"})
-# Ops that still work while the E-STOP latch is set; everything else gets E_ESTOP.
-ESTOP_EXEMPT_OPS = frozenset({"heartbeat", "clear_estop", "set_pose", "snapshot"})
-# States the heartbeat watchdog may cut the motors in. SCOOPING is left out: it is a servo
-# sequence with one 4 cm nudge, not driving.
-MOVING_STATES: frozenset[RoverState] = frozenset({"MOVING", "STATION", "APPROACH"})
 
 # --- simulation constants (mock-only; contract fidelity beats realism) ---------------------
 
@@ -271,15 +270,6 @@ class SimState:
     retry_queue: list[dict] = field(default_factory=list)
 
 
-class OpError(Exception):
-    """Raised by an op to answer with `err` instead of `done`."""
-
-    def __init__(self, code: ErrCode, msg: str = "") -> None:
-        super().__init__(f"{code}: {msg}" if msg else code)
-        self.code: ErrCode = code
-        self.msg = msg
-
-
 @dataclass(frozen=True)
 class _Prop:
     """One station proposal before it gets an id: which view saw it and where it really is."""
@@ -310,10 +300,8 @@ class Sim:
         self.st = SimState()
         self.rng = random.Random(self.opts.seed)  # drives every reproducible decision
         self.sensors = random.Random(self.opts.seed + 1)  # telemetry jitter, off the hot path
-        self.listeners: list[asyncio.Queue[Event]] = []
-        self._running = False
-        self._op: asyncio.Task | None = None
-        self._abort: ErrCode | None = None
+        self.bus = EventBus()
+        self._cut = False  # the watchdog already fired for this stretch of motion
         self._retry: asyncio.Task | None = None
 
     # --- clock --------------------------------------------------------------------------
@@ -330,39 +318,54 @@ class Sim:
         n = max(1, math.ceil(total_s / step))
         return [total_s / n] * n
 
-    # --- events -------------------------------------------------------------------------
+    # --- Backend: events and observable state -------------------------------------------
+
+    def attach(self, queue: asyncio.Queue[Event]) -> None:
+        self.bus.attach(queue)
+
+    def detach(self, queue: asyncio.Queue[Event]) -> None:
+        self.bus.detach(queue)
 
     def emit(self, kind: str, detail: dict) -> None:
-        ev = Event(kind=kind, detail=detail)
-        for q in self.listeners:
-            q.put_nowait(ev)
-
-    # --- the one-op-at-a-time slot ------------------------------------------------------
+        self.bus.emit(kind, detail)
 
     @property
-    def busy(self) -> bool:
-        return self._running
+    def state(self) -> RoverState:
+        return self.st.state
 
-    def begin_op(self) -> None:
-        """Claimed synchronously on dispatch, so a racing second op still gets E_BUSY."""
-        self._running = True
+    @property
+    def _running_op(self) -> bool:
+        """True for exactly as long as a long op holds the rover (ws_server owns the slot)."""
+        return self.st.state not in ("IDLE", "ESTOP")
 
-    def set_op_task(self, task: asyncio.Task) -> None:
-        self._op = task
+    @property
+    def estopped(self) -> bool:
+        return self.st.estop
 
-    def end_op(self) -> None:
-        self._running, self._op = False, None
+    # --- Backend: safety hooks ----------------------------------------------------------
 
-    def abort(self, code: ErrCode) -> None:
-        """Cut the running op short; it answers with `err code` instead of `done`."""
-        if self._op is None or self._op.done():
-            return  # nothing to cut: don't leave a reason behind for the next op
-        self._abort = code
-        self._op.cancel()
+    def on_heartbeat(self) -> None:
+        self.st.last_heartbeat = time.monotonic()
+        self._cut = False
 
-    def take_abort(self) -> ErrCode | None:
-        code, self._abort = self._abort, None
-        return code
+    def watchdog_tick(self) -> ErrCode | None:
+        """Doc 00 section 4: no heartbeat for 1.0 s *while moving* -> stop the motors."""
+        if self._cut or self.st.state not in MOVING_STATES:
+            return None
+        if not ws_server.heartbeat_expired(self.st.last_heartbeat):
+            return None
+        self._cut = True
+        self.st.stop_flag = True
+        log.warning("heartbeat watchdog: stopping (state=%s)", self.st.state)
+        self.emit("stall", {"reason": "heartbeat_watchdog", "state": self.st.state})
+        # Doc 00 names no code for this. E_TIMEOUT tells the brain the motion did not finish,
+        # rather than letting it believe a `done` it never earned.
+        return "E_TIMEOUT"
+
+    def request_stop(self, code: ErrCode | None = None) -> None:
+        """Cooperative halt. The sim's ops poll st.stop_flag between slices."""
+        self.st.stop_flag = True
+        self.st.gz_dps = 0.0
 
     def close(self) -> None:
         """Drop the retry task (shutdown, tests). Queued bundles stay queued."""
@@ -390,7 +393,7 @@ class Sim:
             ),
             scoop=st.scoop,
             cpu_temp_c=55.2,
-            queue_len=1 if self._running else 0,
+            queue_len=1 if self._running_op else 0,
             uplink_backlog=len(st.retry_queue),
         )
 
@@ -464,21 +467,23 @@ class Sim:
     def stop(self) -> dict:
         self.st.stop_flag = True
         self.st.gz_dps = 0.0
-        if not self._running:
+        if not self._running_op:  # mid-op the op's own `finally` does this when it notices
             self._idle()
         return {"pose": self.st.pose.model_dump()}
 
     def estop(self) -> dict:
+        # Latch and cut power here; ws_server.Session aborts the in-flight op (role doc 9).
         self.st.estop = True
         self.st.state = "ESTOP"
         self.st.stop_flag = True
-        self.abort("E_ESTOP")  # works mid-op: P2 role doc section 9
+        self.st.gz_dps = 0.0
         return {"latched": True}
 
     def clear_estop(self) -> dict:
         self.st.estop = False
         self.st.stop_flag = False
         self.st.state = "IDLE"
+        self._cut = False
         return {"latched": False}
 
     def snapshot(self) -> dict:
@@ -775,208 +780,12 @@ def _multipart(meta_name: str, meta_json: str, files: dict[str, bytes]) -> list[
     return parts
 
 
-# --- WebSocket session ---------------------------------------------------------------------
-
-
-def _cmd_id_of(raw: str | bytes) -> str | None:
-    """Best-effort cmd_id out of a frame that failed validation, so we can answer it."""
-    with contextlib.suppress(ValueError, TypeError, AttributeError):
-        value = json.loads(raw).get("cmd_id")
-        if isinstance(value, str) and value:
-            return value
-    return None
-
-
-def _first_error(exc: ValueError) -> str:
-    """One short line out of a pydantic ValidationError, for err.msg."""
-    errors = getattr(exc, "errors", None)
-    if callable(errors):
-        for e in errors():
-            loc = ".".join(str(p) for p in e.get("loc", ()))
-            return f"{loc}: {e.get('msg', '')}".strip(": ")
-    return str(exc).splitlines()[0]
-
-
-class Session:
-    """One brain connection: reader + ack/dispatch, 5 Hz telemetry, 20 Hz watchdog."""
-
-    def __init__(self, ws: ServerConnection, sim: Sim) -> None:
-        self.ws = ws
-        self.sim = sim
-        self.events: asyncio.Queue[Event] = asyncio.Queue()
-        self._cmds: set[asyncio.Task] = set()
-
-    async def run(self) -> None:
-        self.sim.st.last_heartbeat = time.monotonic()
-        self.sim.listeners.append(self.events)
-        loops = [
-            asyncio.create_task(self._telemetry_loop(), name="telemetry"),
-            asyncio.create_task(self._watchdog_loop(), name="watchdog"),
-            asyncio.create_task(self._event_loop(), name="events"),
-        ]
-        try:
-            async for raw in self.ws:
-                await self._on_frame(raw)
-        finally:
-            with contextlib.suppress(ValueError):
-                self.sim.listeners.remove(self.events)
-            self.sim.stop()  # brain gone -> motors stop, same as the watchdog would
-            for t in (*loops, *self._cmds):
-                t.cancel()
-            await asyncio.gather(*loops, *self._cmds, return_exceptions=True)
-
-    # --- outgoing -----------------------------------------------------------------------
-
-    async def send(self, msg: Ack | Done | Err | Telemetry | Event) -> None:
-        with contextlib.suppress(websockets.WebSocketException):
-            await self.ws.send(msg.model_dump_json())
-
-    async def _telemetry_loop(self) -> None:
-        while True:
-            await self.send(self.sim.telemetry())
-            await asyncio.sleep(1.0 / TELEMETRY_HZ)
-
-    async def _event_loop(self) -> None:
-        while True:
-            await self.send(await self.events.get())
-
-    async def _watchdog_loop(self) -> None:
-        """Doc 00 section 4: stop the motors if no heartbeat for 1.0 s *while moving*."""
-        while True:
-            await asyncio.sleep(1.0 / WATCHDOG_HZ)
-            sim = self.sim
-            if time.monotonic() - sim.st.last_heartbeat <= HEARTBEAT_TIMEOUT_S:
-                continue
-            if sim.busy and sim.st.state in MOVING_STATES:
-                log.warning("heartbeat watchdog: stopping (state=%s)", sim.st.state)
-                sim.emit("stall", {"reason": "heartbeat_watchdog", "state": sim.st.state})
-                # Doc 00 doesn't name a code for this; E_TIMEOUT tells the brain the motion
-                # did not finish, rather than letting it believe a `done` it never earned.
-                sim.abort("E_TIMEOUT")
-
-    # --- incoming -----------------------------------------------------------------------
-
-    async def _on_frame(self, raw: str | bytes) -> None:
-        try:
-            cmd = Cmd.model_validate_json(raw)
-        except ValueError as e:
-            cmd_id = _cmd_id_of(raw)
-            log.info("bad cmd (%s): %s", cmd_id, e)
-            if cmd_id:  # no cmd_id -> nothing to answer, so drop it
-                await self.send(Err(cmd_id=cmd_id, code="E_BAD_ARGS", msg=_first_error(e)))
-            return
-        if cmd.op == "heartbeat":
-            self.sim.st.last_heartbeat = time.monotonic()  # no ack, no done (doc 00 6.2)
-            return
-        await self.send(Ack(cmd_id=cmd.cmd_id))
-        await self._dispatch(cmd)
-
-    async def _dispatch(self, cmd: Cmd) -> None:
-        sim = self.sim
-        if sim.st.estop and cmd.op not in ESTOP_EXEMPT_OPS:
-            await self.send(Err(cmd_id=cmd.cmd_id, code="E_ESTOP", msg="E-STOP latched"))
-            return
-        if cmd.op in IMMEDIATE_OPS:
-            try:
-                await self.send(Done(cmd_id=cmd.cmd_id, result=self._immediate(cmd)))
-            except OpError as e:
-                await self.send(Err(cmd_id=cmd.cmd_id, code=e.code, msg=e.msg))
-            return
-        if sim.busy:
-            await self.send(Err(cmd_id=cmd.cmd_id, code="E_BUSY", msg=f"busy, {cmd.op} refused"))
-            return
-        sim.begin_op()  # synchronous, so the next frame already sees us busy
-        task = asyncio.create_task(self._run_long(cmd), name=f"cmd:{cmd.cmd_id}")
-        self._cmds.add(task)
-        task.add_done_callback(self._cmds.discard)
-
-    def _immediate(self, cmd: Cmd) -> dict:
-        sim = self.sim
-        if cmd.op == "estop":
-            return sim.estop()
-        if cmd.op == "clear_estop":
-            return sim.clear_estop()
-        if cmd.op == "stop":
-            return sim.stop()
-        if cmd.op == "set_pose":
-            return sim.set_pose(**cmd.args)
-        if cmd.op == "snapshot":
-            return sim.snapshot()
-        raise OpError("E_INTERNAL", f"{cmd.op} is not an immediate op")
-
-    async def _long(self, cmd: Cmd) -> dict:
-        sim = self.sim
-        if cmd.op == "start_run":
-            return sim.start_run(**cmd.args)
-        if cmd.op == "drive":
-            return await sim.drive(**cmd.args)
-        if cmd.op == "turn":
-            return await sim.turn(**cmd.args)
-        if cmd.op == "station":
-            return await sim.station(**cmd.args)
-        if cmd.op == "approach":
-            return await sim.approach(**cmd.args)
-        if cmd.op == "scoop":
-            return await sim.scoop(**cmd.args)
-        if cmd.op == "dump":
-            return await sim.dump()
-        if cmd.op == "scoop_pose":
-            return await sim.scoop_pose(**cmd.args)
-        raise OpError("E_INTERNAL", f"{cmd.op} has no handler")
-
-    async def _run_long(self, cmd: Cmd) -> None:
-        """Hold the one-op slot, enforce the op's deadline, answer exactly once."""
-        sim = self.sim
-        if sim.st.estop:  # closes the race between `estop` and a just-dispatched op
-            sim.end_op()
-            await self.send(Err(cmd_id=cmd.cmd_id, code="E_ESTOP", msg="E-STOP latched"))
-            return
-        limit = OP_TIMEOUT_S.get(cmd.op)
-        inner = asyncio.create_task(self._long(cmd), name=f"op:{cmd.op}")
-        sim.set_op_task(inner)
-        try:
-            await self.send(Done(cmd_id=cmd.cmd_id, result=await asyncio.wait_for(inner, limit)))
-        except TimeoutError:
-            await self.send(
-                Err(cmd_id=cmd.cmd_id, code="E_TIMEOUT", msg=f"{cmd.op} exceeded {limit:g} s")
-            )
-        except OpError as e:
-            await self.send(Err(cmd_id=cmd.cmd_id, code=e.code, msg=e.msg))
-        except asyncio.CancelledError:
-            code = sim.take_abort()
-            if code is None:  # a real shutdown, not an abort
-                raise
-            await self.send(Err(cmd_id=cmd.cmd_id, code=code, msg=f"{cmd.op} aborted"))
-        except Exception as e:  # a bug in the mock, not a contract case
-            log.exception("%s failed", cmd.op)
-            await self.send(Err(cmd_id=cmd.cmd_id, code="E_INTERNAL", msg=repr(e)))
-        finally:
-            sim.end_op()
-
-
 # --- server --------------------------------------------------------------------------------
 
 
-def make_handler(sim: Sim) -> Callable:
-    async def handler(ws: ServerConnection) -> None:
-        path = ws.request.path.split("?")[0] if ws.request is not None else "/rover"
-        if path != "/rover":  # doc 00 section 3: the endpoint is /rover
-            await ws.close(code=1008, reason="expected /rover")
-            return
-        log.info("brain connected: %s", ws.remote_address)
-        try:
-            await Session(ws, sim).run()
-        except websockets.WebSocketException as e:
-            log.debug("connection closed: %s", e)
-        finally:
-            log.info("brain disconnected")
-
-    return handler
-
-
-def serve_rover(sim: Sim, host: str, port: int):
-    """`async with serve_rover(...) as server:` -- port 0 picks a free port (tests)."""
-    return serve(make_handler(sim), host, port, ping_interval=None)
+# The protocol layer is the real Pi's, not a copy of it (rover/rover/ws_server.py).
+make_handler = ws_server.make_handler
+serve_rover = ws_server.serve_rover
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
