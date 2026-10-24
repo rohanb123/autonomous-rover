@@ -37,10 +37,12 @@ def category_score(probs: dict[str,float], priors: dict[str,float], wanted: set[
 def explain(components: dict, category: str, wanted: set[str], distance_m: float) -> str             # ≤ 140 chars
 
 # gx10/brain/dedupe.py
-def merge_or_new(prop: dict, cands: dict[str, Candidate], xy_thr: float = 0.15, cos_thr: float = 0.85, hard_xy: float = 0.06) -> str | None  # existing cand_id or None
+def merge_or_new(prop: dict, cands: dict[str, Candidate], embeddings: dict[str, list[float]]) -> str | None  # existing cand_id or None; thresholds from run.yaml
+def merge(cand: Candidate, prop_id: str, new: Candidate) -> Candidate   # keeps max score, appends prop_id
 
 # gx10/brain/visited.py
-def excluded(xy: tuple[float,float], visits: list[Visit], radius_m: float = 0.20) -> bool
+def excluded(xy: tuple[float,float], visits: list[Visit], radius_m: float | None = None) -> bool   # default: each visit's radius_m (0.20)
+def newly_excluded(cands: dict[str, Candidate], visits: list[Visit]) -> list[str]
 
 # gx10/brain/planner.py
 def station_plan(radius_m: float) -> list[tuple[float,float]]          # home; + 4 points at 0.6·radius if radius > 0.8

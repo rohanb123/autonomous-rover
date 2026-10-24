@@ -93,6 +93,8 @@ ares-scout/
 ├── gx10/                          no shared files: each service dir has its own requirements.txt (same owner)
 │   ├── brain/                     P4 (including voice/)
 │   │   ├── requirements.txt
+│   │   ├── settings.py            config/run.yaml loader (§8 constants)
+│   │   ├── tests/                 unit tests (scoring, heap, dedupe, route, run.yaml ↔ §8)
 │   │   ├── app.py                 FastAPI :8000 (REST + WS) – dashboard command API
 │   │   ├── fsm.py                 run/mission state machine
 │   │   ├── planner.py             station plan, heap top-k, NN route, replan on skip
