@@ -1,0 +1,22 @@
+# Owner: P3. Dataset classes -> our heads (docs/03 §2 "Mapping to our categories").
+# MSL v2.1 classes: 0 Arm cover, 1 Other rover part, 2 Artifact, 3 Nearby surface, 4 Close-up rock,
+# 5 DRT, 6 DRT spot, 7 Distant landscape, 8 Drill hole, 9 Night sky, 10 Float, 11 Layers,
+# 12 Light-toned veins, 13 Mastcam cal target, 14 Sand, 15 Sun, 16 Wheel, 17 Wheel joint,
+# 18 Wheel tracks.
+
+visual:                     # binary "science-interesting" head, trained on MSL
+  positive: [4, 8, 10, 11, 12, 14]
+  negative: [0, 1, 2, 5, 6, 9, 13, 15, 16, 17, 18]
+  # 3 Nearby surface and 7 Distant landscape are left out (neither clearly science nor not).
+
+category:                   # six-way head, trained on MSL only (one label per image)
+  float_rock: [10]
+  layered: [11]
+  veined: [12]
+  sand: [14]
+  bedrock: [3]              # weak: "Nearby surface" (docs/03)
+  pebble: [4]               # weak: "Close-up rock" (docs/03); 4 is listed under float_rock too,
+                            # but float_rock already has 10 and pebble has no other MSL source.
+
+terrain:                    # four-way head, trained on AI4Mars crops
+  classes: [soil, bedrock, sand, big_rock]   # AI4Mars label ids 0..3
