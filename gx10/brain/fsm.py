@@ -244,6 +244,8 @@ class RunFSM:
         m = self.mission
         self.db.mission(m.model_dump(), "active")
         try:
+            # The rover stamps this onto every station and sample upload (doc 00 §5, §6.2).
+            await self._cmd("start_run", {"run_id": self.run_id})
             await self._survey()
             await self._plan()
             if m.mode == "suggest":

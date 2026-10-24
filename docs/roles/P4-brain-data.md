@@ -84,7 +84,7 @@ class BrainDb:   # thin wrappers that call RateLimitedWriter / StdbClient with p
 TypeScript: `spacetimedb/src/schema.ts`, `index.ts` (02 §5–6); `dashboard/src/{main.tsx, App.tsx, stdb/connection.ts, stdb/hooks.ts, api/brain.ts, panels/*}` (06 §4–5).
 
 ## 5. The campaign loop (what `RunFSM` does)
-1. `/api/mission/*` → (voice: `transcribe`) → `parse_mission` → `upsert_mission(status=parsed)` → `status=active`, FSM → SURVEY.
+1. `/api/mission/*` → (voice: `transcribe`) → `parse_mission` → `upsert_mission(status=parsed)` → `status=active`, FSM → SURVEY. The campaign's first rover command is `start_run {run_id}` so station and sample uploads carry the run id (00 §6.2).
 2. **SURVEY:** for each point in `station_plan`: `turn`/`drive` there → if overhead fresh, `set_pose` → `station` → for each proposal: `/score` → `final_score` → `merge_or_new` → `excluded`? → `upsert_candidate` → `TopK.offer`. Ranks → `upsert_candidate` (rank changes only).
 3. **PLAN:** `nn_route(pose, topk)` → `upsert_task` ×k. `suggest` mode → AWAIT_APPROVAL.
 4. **INVESTIGATE** each: `approach` (E_LOST_TARGET → outcome `unreachable`) → `scoop` → `/analyze(interest_score=score)` → if `scoop_has_item` false: one retry (re-approach + scoop), then outcome `empty_scoop` → `dump` → `mark_visited` (radius 0.20) → `add_analysis` → re-run `excluded` over remaining candidates → recompute the NN route from the new pose.

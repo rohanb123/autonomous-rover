@@ -4,18 +4,35 @@ Not mocks/fake_rover.py (P2 owns that): this only exists so the brain can be tes
 before it lands. Real WebSocket server; acks immediately, finishes ops after `op_delay_s`,
 streams telemetry, latches E-STOP, counts heartbeats. Stations "see" the rocks in ROCKS
 within SEEN_M, so a rock between two stations is reported twice (exercises dedupe).
+Pass mapper_url to upload each station and sample to a real mapper and return its reply.
 """
 
 from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import math
+import time
 
+import httpx
 from websockets.asyncio.server import ServerConnection, serve
 
 from marsrover_shared.frames import wrap_deg
-from marsrover_shared.schemas import Ack, Cmd, Done, Err, Imu, Pose, ScoopState, Telemetry
+from marsrover_shared.schemas import (
+    Ack,
+    Cmd,
+    Done,
+    Err,
+    Imu,
+    MapperStationReply,
+    Pose,
+    SampleJson,
+    SampleReply,
+    ScoopState,
+    StationJson,
+    Telemetry,
+)
 
 # (x, y, size_m) in the mission frame. r3 sits between home and the +x station.
 ROCKS = [
@@ -29,9 +46,21 @@ SEEN_M = 0.85
 
 
 class StubRover:
-    def __init__(self, op_delay_s: float = 0.01, telemetry_hz: float = 20.0) -> None:
+    def __init__(
+        self,
+        op_delay_s: float = 0.01,
+        telemetry_hz: float = 20.0,
+        mapper_url: str | None = None,
+    ) -> None:
         self.op_delay_s, self.telemetry_hz = op_delay_s, telemetry_hz
+        self.mapper_url = mapper_url.rstrip("/") if mapper_url else None
         self.x = self.y = self.heading = 0.0
+        self.run_id = ""
+        self._last_cand = ""
+        self._kf = 0
+        self._http: httpx.AsyncClient | None = None
+        self._jpg_bytes: bytes | None = None
+        self._png_bytes: bytes | None = None
         self.estop = False
         self.heartbeats = 0
         self.ops: list[str] = []
@@ -51,9 +80,13 @@ class StubRover:
         self._server = await serve(self._handle, "127.0.0.1", 0)
         port = self._server.sockets[0].getsockname()[1]
         self.url = f"ws://127.0.0.1:{port}/rover"
+        if self.mapper_url:
+            self._http = httpx.AsyncClient(base_url=self.mapper_url, timeout=30.0)
         return self
 
     async def __aexit__(self, *exc) -> None:
+        if self._http is not None:
+            await self._http.aclose()
         self._server.close()
         await self._server.wait_closed()
 
@@ -76,7 +109,7 @@ class StubRover:
         with contextlib.suppress(Exception):
             while True:
                 t = Telemetry(
-                    run_id="",
+                    run_id=self.run_id,
                     pose=self.pose(),
                     state="ESTOP" if self.estop else "IDLE",
                     estop=self.estop,
@@ -111,10 +144,21 @@ class StubRover:
             await self.hold_station.wait()
         if cmd.op == "scoop":
             await self.hold_scoop.wait()
+        if self.mapper_url and cmd.op in ("station", "scoop"):
+            try:
+                result = await self._publish(cmd, result)
+            except Exception as e:
+                await ws.send(
+                    Err(cmd_id=cmd.cmd_id, code="E_UPLOAD", msg=str(e)[:300]).model_dump_json()
+                )
+                return
         await ws.send(Done(cmd_id=cmd.cmd_id, result=result).model_dump_json())
 
     def _apply(self, cmd: Cmd) -> dict:
         a = cmd.args
+        if cmd.op == "start_run":
+            self.run_id = str(a["run_id"])
+            return {"ok": True}
         if cmd.op == "turn":
             self.heading = wrap_deg(self.heading + a["deg"])
         elif cmd.op == "drive":
@@ -125,8 +169,11 @@ class StubRover:
             self.estop = False
             return {"latched": False}
         elif cmd.op == "station":
-            return self._station(a["station_id"])
+            return self._station(
+                a["station_id"], int(a.get("n_views", 8)), float(a.get("step_deg", 45))
+            )
         elif cmd.op == "approach":
+            self._last_cand = str(a.get("cand_id", ""))
             if self.lose_first:
                 self.lose_first = False
                 self.lost.add((round(a["x"], 3), round(a["y"], 3)))
@@ -151,8 +198,22 @@ class StubRover:
             return {"ok": True}
         return {"pose": self.pose().model_dump()}
 
-    def _station(self, station_id: str) -> dict:
+    def _station(self, station_id: str, n_views: int = 8, step_deg: float = 45.0) -> dict:
+        keyframes = []
+        if self.mapper_url:
+            # Absolute mission-frame heading at each capture (doc 00 §6.4).
+            for i in range(n_views):
+                self._kf += 1
+                keyframes.append(
+                    {
+                        "kf_id": f"k_{self._kf:04d}",
+                        "file": f"kf_{i:03d}.jpg",
+                        "heading_deg": wrap_deg(self.heading + i * step_deg),
+                        "t": time.time(),
+                    }
+                )
         proposals, crops = [], {}
+        anchor = keyframes[0]["kf_id"] if keyframes else "k_0001"
         for rx, ry, size in ROCKS:
             if math.hypot(rx - self.x, ry - self.y) <= SEEN_M:
                 self._props += 1
@@ -160,7 +221,7 @@ class StubRover:
                 proposals.append(
                     {
                         "prop_id": pid,
-                        "kf_id": "k_0001",
+                        "kf_id": anchor,
                         "bbox_px": [10, 10, 20, 20],
                         "crop": f"crop_{pid}.jpg",
                         "xy": [rx, ry],
@@ -170,12 +231,18 @@ class StubRover:
                 )
                 crops[pid] = f"http://stub-mapper/crops/{pid}.jpg"
         return {
-            "run_id": "r_test",
+            "run_id": self.run_id,
             "station_id": station_id,
-            "t": 0.0,
+            "t": time.time(),
             "pose": self.pose().model_dump(),
-            "keyframes": [],
-            "bev": {"file": "bev.png", "res_m_px": 0.005, "w_px": 360, "h_px": 360},
+            "keyframes": keyframes,
+            "bev": {
+                "file": "bev.png",
+                "res_m_px": 0.005,
+                "w_px": 360,
+                "h_px": 360,
+                "frame": "rover@station",
+            },
             "proposals": proposals,
             "mapper": {
                 "ok": True,
@@ -184,6 +251,73 @@ class StubRover:
                 "urls": {"bev": "", "crops": crops},
             },
         }
+
+    async def _publish(self, cmd: Cmd, result: dict) -> dict:
+        """Upload the station or sample to the real mapper and use its reply (doc 00 §6.4–6.5)."""
+        if cmd.op == "station":
+            return await self._publish_station(result)
+        return await self._publish_sample(str(cmd.args["sample_id"]), result)
+
+    def _jpeg(self) -> bytes:
+        if self._jpg_bytes is None:
+            import io
+
+            from PIL import Image
+
+            buf = io.BytesIO()
+            Image.new("RGB", (64, 48), (120, 72, 48)).save(buf, format="JPEG", quality=70)
+            self._jpg_bytes = buf.getvalue()
+        return self._jpg_bytes
+
+    def _png(self) -> bytes:
+        if self._png_bytes is None:
+            import io
+
+            from PIL import Image
+
+            buf = io.BytesIO()
+            Image.new("RGB", (64, 64), (122, 82, 52)).save(buf, format="PNG")
+            self._png_bytes = buf.getvalue()
+        return self._png_bytes
+
+    async def _publish_station(self, result: dict) -> dict:
+        meta = {k: v for k, v in result.items() if k != "mapper"}
+        st = StationJson.model_validate(meta)
+        body = st.model_dump(mode="json")
+        jpg, png = self._jpeg(), self._png()
+        files: list[tuple] = [
+            ("station.json", ("station.json", json.dumps(body), "application/json"))
+        ]
+        files += [(kf.file, (kf.file, jpg, "image/jpeg")) for kf in st.keyframes]
+        files.append((st.bev.file, (st.bev.file, png, "image/png")))
+        files += [(p.crop, (p.crop, jpg, "image/jpeg")) for p in st.proposals]
+        resp = await self._http.post("/ingest/station", files=files)
+        if resp.status_code != 200:
+            raise RuntimeError(f"ingest/station {resp.status_code}: {resp.text[:300]}")
+        reply = MapperStationReply.model_validate(resp.json())
+        return {**body, "mapper": reply.model_dump()}
+
+    async def _publish_sample(self, sample_id: str, result: dict) -> dict:
+        meta = SampleJson(
+            run_id=self.run_id,
+            sample_id=sample_id,
+            cand_id=self._last_cand,
+            t=time.time(),
+            pose=self.pose(),
+        )
+        body = meta.model_dump(mode="json")
+        files = [
+            ("sample.json", ("sample.json", json.dumps(body), "application/json")),
+            ("present.jpg", ("present.jpg", self._jpeg(), "image/jpeg")),
+        ]
+        resp = await self._http.post("/ingest/sample", files=files)
+        if resp.status_code != 200:
+            raise RuntimeError(f"ingest/sample {resp.status_code}: {resp.text[:300]}")
+        reply = SampleReply.model_validate(resp.json())
+        out = dict(result)
+        out["present_image"] = reply.url
+        out["uploaded"] = True
+        return out
 
 
 GOLDEN_ASSAY = {
