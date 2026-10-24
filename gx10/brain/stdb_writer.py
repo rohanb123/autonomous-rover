@@ -10,7 +10,7 @@ import json
 import time
 from collections.abc import Mapping
 
-from marsrover_shared import eventlog
+from marsrover_shared import eventlog, journal
 from marsrover_shared.schemas import AnalysisResult, Candidate, Pose, Telemetry, Visit
 from marsrover_shared.stdb_http import RateLimitedWriter, StdbClient
 
@@ -21,7 +21,10 @@ class BrainDb:
     def __init__(self, client: StdbClient) -> None:
         self._run_id = ""
         self._w = RateLimitedWriter(
-            client, RATES_HZ, on_drop=lambda reason, n: self._backpressure(reason, n)
+            client,
+            RATES_HZ,
+            on_drop=lambda reason, n: self._backpressure(reason, n),
+            journal=journal.record,  # every write -> data/runs/<run>/stdb_calls.jsonl
         )
 
     def _backpressure(self, reason: str, dropped: int) -> None:

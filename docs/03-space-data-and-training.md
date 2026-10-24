@@ -50,9 +50,12 @@
 `ml/chemcam_priors.py`:
 1. Load `msl_ccam_obs.csv` (pandas; column names per `msl_ccam_obs.lbl`).
 2. Split rows: `aegis = Target Type contains "AEGIS"` (variants "AEGIS selected bedrock" 3,417, "AEGIS-selected bedrock" 2,568, …) or Target name starts `aegis_`; `human = rest`, excluding calibration/sky (`Passive Sky` 5,808, `Calibration Target` 4,137).
-3. Map Target Type → our categories with a keyword table (`Bedrock`→bedrock, `Float Rock`→float_rock, `Soil`→pebble/soil, `Outcrop`→layered, vein keywords in Comments→veined ⚠️ keyword list to be checked by eye).
+3. Map Target Type → our categories with an ordered keyword table (`TYPE_RULES` in the script): `Bedrock`→bedrock, `Float Rock`/`Boulder`/`Broken Rock`→float_rock, `Soil`/`Pebble`→pebble, `Outcrop`/layer words→layered, `Sand`/dune/ripple→sand, `Vein` (or vein words in Comments on bedrock/unmapped targets)→veined. Excluded: sky, calibration targets (incl. CCCT, magnets), drill holes/tailings, mosaics and long-distance shots, hardware. Unmapped (left out of the shares): the generic `Rock` and blind targets (mixed rock and soil). Reviewed by eye by P3 on 2026-10-24 (`python ml/chemcam_priors.py --report`).
 4. **Count unique targets** per category (not shots, since one target gets many LIBS points), for human and AEGIS separately.
-5. `prior[c] = 0.7·share_human[c] + 0.3·share_aegis[c]`, normalized so max = 1. Write `ml/models/category_priors.json` with both raw shares (the dashboard can show "scientists picked float rocks X% of the time").
+5. `raw[c] = 0.7·share_human[c] + 0.3·share_aegis[c]`, normalized so max = 1, then **`prior[c] = raw[c] ** 0.5`** (square-root flattening, P3 decision 2026-10-24). Bedrock is ~6× every other category in the human shares and ~98% of AEGIS picks, so unflattened priors (bedrock 1.0, everything else ≤ 0.12) would make `category_score` ignore all but bedrock, including the pebbles the rover can scoop. Flattening keeps the scientists' ranking.
+6. Outputs: `ml/models/category_priors.json` = flat `{category: prior}` (exactly what the brain's `vision_client.load_priors` reads); `ml/models/category_priors_detail.json` = human/AEGIS counts and shares, raw and flattened priors, the rules used (the dashboard can show "scientists picked float rocks X% of the time").
+
+Result (mapping `chemcam-priors-2`): bedrock 1.00 · layered 0.34 · veined 0.30 · float_rock 0.29 · pebble 0.28 · sand 0.17 (from 1,894 / 367 / 272 / 265 / 246 / 89 human targets).
 
 Top target types in the file (rows): Bedrock 22,252 · Rock 8,264 · Passive Sky 5,808 · Calibration Target 4,137 · Soil 2,296 · Float Rock 1,724 · Outcrop 1,642.
 
@@ -76,10 +79,37 @@ Top target types in the file (rows): Bedrock 22,252 · Rock 8,264 · Passive Sky
 ## 5. Acceptance (P3)
 - `metrics.json`: visual head AUC on MSL v2.1 test **≥ 0.80** (target; if lower, still ship and report it).
 - Category head macro-F1 reported; arena hold-out (≥ 20 images) accuracy reported, not gated.
-- `category_priors.json` exists with human and AEGIS shares and the counts used.
+- `category_priors.json` (flat priors) and `category_priors_detail.json` (human and AEGIS shares and the counts used) exist.
+
+**Results, 2026-10-24** (`vit-b-16-siglip+lr-v1`: SigLIP ViT-B/16 `webli` embeddings + logistic regression, balanced class weights, C picked on validation; P3 laptop, before arena few-shot):
+| Head | Test set | Result |
+|---|---|---|
+| visual | MSL v2.1 test, 379 images | **AUC 0.993** (target 0.80 met) |
+| category | MSL v2.1 test, 332 images | macro-F1 0.53, accuracy 0.77. Per class F1: bedrock 0.90, pebble 0.75, layered 0.59, sand 0.56, veined 0.27 (mostly confused with pebble = MSL "Close-up rock"), float_rock 0.13 (1 test image) |
+| terrain | AI4Mars test_min3, 469 crops | accuracy 0.94, macro-F1 0.94 over soil/bedrock/sand. big_rock: 81 train crops, none in test (128 px crops are rarely 80 % big rock) |
+
+Reproduce: `python ml/build_embeddings.py && python ml/train_heads.py && python ml/eval.py`. These are Mars-image numbers; the arena hold-out comes with the few-shot step.
 - `vision /score` latency < 300 ms for 10 crops on the GX10.
 
 ## 6. Licenses and attribution (put in README credits at the end)
 - MSL v2.1 and AI4Mars: CC-BY-4.0 → attribute in README and the dashboard "About".
 - MSL v1: CC-BY-SA-4.0. If used, models trained on it are fine; **don't redistribute the images** in our repo.
 - No dataset images are committed to git (`ml/data/` is gitignored).
+
+## 7. Getting the model files (any machine that runs vision or the brain) <a id="model-files"></a>
+The vision service (`uvicorn vision.app:app`) refuses to start without `ml/models/heads.joblib` and the embedding weights, and the brain reads `ml/models/category_priors.json`. None of these are in git (`ml/models/`, `ml/data/` and the Hugging Face cache are local), so every machine needs one of:
+
+**A. Build them** (needs internet once):
+```
+python ml/setup_models.py                  # MSL + ChemCam (~80 MB) + SigLIP weights (~800 MB), a few minutes
+python ml/setup_models.py --with-ai4mars   # also AI4Mars (6.5 GB) for the real terrain head
+```
+It skips any step whose output already exists (`--force` redoes embeddings, heads and priors). Without AI4Mars the heads version ends in `+derived-terrain`: terrain is the most likely category mapped to a terrain class (sand→sand, bedrock/layered/veined→bedrock, pebble→soil, float_rock→big_rock). Fine for testing; use `--with-ai4mars` for real runs.
+
+**B. Copy a bundle** (no internet needed on the target, e.g. the GX10 at the venue):
+```
+python ml/package_models.py pack                        # on a machine that has the files -> ml/dist/marsrover-models.zip (~800 MB)
+python ml/package_models.py unpack marsrover-models.zip # on the target: checks sha256, fills ml/models/ and the HF cache
+HF_HUB_OFFLINE=1 uvicorn vision.app:app --port 8100     # offline: never try to download
+```
+`VISION_HEADS_PATH` points the vision service at a heads file outside `ml/models/` if needed.

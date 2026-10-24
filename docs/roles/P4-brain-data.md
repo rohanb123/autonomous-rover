@@ -73,6 +73,8 @@ class RoverLink:
 class OverheadLink:
     async def run(self, url: str = "ws://192.168.50.10:8300/pose") -> None
     def latest(self, max_age_s: float = 0.5) -> OverheadPose | None   # brain sends set_pose(source="aruco") at each station if fresh and reproj_err_px < 2
+    def usable(self) -> OverheadPose | None      # fresh + visible + reproj_err_px < 2; the FSM calls set_pose with it before each station
+    health: str                                   # ok (fresh poses) | degraded (connected, stale) | down -> HealthResp.overhead
 
 # gx10/brain/stdb_writer.py
 class BrainDb:   # thin wrappers that call RateLimitedWriter / StdbClient with positional args from 02 §6
@@ -112,7 +114,7 @@ Commands from the dashboard run in order through the FSM. `stop` and E-STOP skip
 - **You use** `fake_rover.py` (P2), `fake_vision.py` and `fake_mapper.py` (P3).
 
 ## 9. Watch-outs
-- **Never block the control loop on STDB** (queue + rate limit; events.jsonl backup).
+- **Never block the control loop on STDB** (queue + rate limit; every write is journaled to `stdb_calls.jsonl`, and `mocks/replay_run.py` rebuilds the run from it).
 - E-STOP path: dashboard → `/api/estop` → `RoverLink.estop()` directly, no FSM lock. Test it every milestone.
 - Grok needs internet: on timeout (`asr_timeout_s` / `nlu_timeout_s`) or any API error, fall back to `faster-whisper` / the regex parser, list what it assumed, and log which path ran (`event` kind `voice_offline`). Always validate Grok's output with the `Mission` pydantic model too, and clamp to the 00 §6.1 ranges.
 - `XAI_API_KEY` lives in `config/.env` only. Never log it or send it to the dashboard.

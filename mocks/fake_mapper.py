@@ -214,7 +214,7 @@ def create_app(
 
         x, y, hdg = st.pose.x, st.pose.y, st.pose.heading_deg
         for kf in st.keyframes:
-            # UNVERIFIED: kf.heading_deg is taken as the mission-frame heading at capture.
+            # kf.heading_deg is the absolute mission-frame heading at capture (docs/00 §6.4).
             db(
                 "upsert_keyframe",
                 kf.kf_id,
@@ -331,9 +331,12 @@ def main() -> None:
 
     writer = None
     if not args.no_stdb:
+        from marsrover_shared import journal
         from marsrover_shared.stdb_http import RateLimitedWriter, StdbClient
 
-        writer = RateLimitedWriter(StdbClient.from_env(token_var="STDB_TOKEN_MAPPER"), hz={})
+        writer = RateLimitedWriter(
+            StdbClient.from_env(token_var="STDB_TOKEN_MAPPER"), hz={}, journal=journal.record
+        )
     import uvicorn
 
     app = create_app(args.data_root, args.public_url, writer)

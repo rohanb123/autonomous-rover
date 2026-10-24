@@ -72,6 +72,7 @@ class StubRover:
         self.hold_scoop.set()
         self.lost: set[tuple[float, float]] = set()  # rock xy whose approach loses the target
         self.lose_first = False  # the first approached target is lost
+        self.pose_resets: list[tuple] = []  # set_pose calls received
         self._props = 0
         self._server = None
         self.url = ""
@@ -165,6 +166,9 @@ class StubRover:
             h = math.radians(self.heading)
             self.x += a["dist_m"] * math.cos(h)
             self.y += a["dist_m"] * math.sin(h)
+        elif cmd.op == "set_pose":
+            self.x, self.y, self.heading = a["x"], a["y"], a["heading_deg"]
+            self.pose_resets.append((a["x"], a["y"], a["heading_deg"], a["source"]))
         elif cmd.op == "clear_estop":
             self.estop = False
             return {"latched": False}

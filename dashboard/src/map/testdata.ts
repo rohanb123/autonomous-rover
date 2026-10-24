@@ -15,6 +15,7 @@ export const pose = (x: number, y: number, headingDeg: number, tUnix: number, so
 });
 
 export const localTile = (stationId: string, x: number, y: number, headingDeg: number, tUnix: number, pngB64 = ''): LocalMapTile => ({
+  key: `${RUN}|${stationId}`,
   stationId,
   runId: RUN,
   tUnix,
@@ -43,6 +44,7 @@ export const globalTile = (ix: number, iy: number, originX: number, originY: num
 });
 
 export const candidate = (candId: string, x: number, y: number, score: number, status: string, rank = -1): Candidate => ({
+  key: `${RUN}|${candId}`,
   candId,
   runId: RUN,
   stationId: 's_0001',
@@ -60,6 +62,7 @@ export const candidate = (candId: string, x: number, y: number, score: number, s
 });
 
 export const visit = (visitId: string, candId: string, x: number, y: number, tUnix: number): Visit => ({
+  key: `${RUN}|${visitId}`,
   visitId,
   runId: RUN,
   candId,

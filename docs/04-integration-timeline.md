@@ -11,7 +11,7 @@ Every service has a mock that speaks its exact contract by I0, so nobody waits o
 | `mocks/fake_vision.py` | P3 | vision :8100 (`/analyze` uses the real `bradford_sim`) | I0 |
 | `mocks/fake_mapper.py` | P3 | mapper :8200 | I0 |
 | `mocks/fake_brain.py` | P4 | the whole backend, writing a scripted run to STDB | I0 |
-| `mocks/replay_run.py` | P4 | re-inserts events.jsonl into a fresh DB | I3 |
+| `mocks/replay_run.py` | P4 | re-sends a run's `stdb_calls.jsonl` journal into a DB (fresh, or `--as` a new run id) | I3 |
 
 Swap order: fake_mapper → real mapper (I1), fake_vision → real vision (I2), fake_rover → real Pi (I3).
 

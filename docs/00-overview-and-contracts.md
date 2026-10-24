@@ -3,7 +3,7 @@
 > If code disagrees with this file, the code is wrong. Change process: [AGENTS.md §3](../AGENTS.md#3-changing-a-contract).
 
 ## 0. Version
-`CONTRACT_VERSION = 1.3.0` (2026-10-24: removed the Mars delay mode in 1.1.0; mission parsing via Grok in 1.2.0; keyframe headings are absolute + mapper `/health` in 1.3.0)
+`CONTRACT_VERSION = 1.4.0` (2026-10-24: removed the Mars delay mode in 1.1.0; mission parsing via Grok in 1.2.0; keyframe headings are absolute + mapper `/health` in 1.3.0; run-scoped DB keys in 1.4.0)
 
 ## 1. System in one page
 
@@ -59,7 +59,8 @@ ares-scout/
 │       ├── ids.py                 id generators (r_/m_/s_/k_/p_/c_/t_/v_/a_)
 │       ├── frames.py              wrap_deg(), rover_to_mission(), mission_to_rover()
 │       ├── stdb_http.py           StdbClient: call(reducer, *args), sql(query)
-│       └── eventlog.py            append events.jsonl
+│       ├── eventlog.py            append events.jsonl
+│       └── journal.py             append every STDB call to stdb_calls.jsonl (replay source)
 ├── hardware/                      P1
 │   ├── bom.csv                    mirror of docs/01 BOM
 │   ├── wiring/harness.md          as-built wiring photos + deviations
@@ -159,7 +160,7 @@ ares-scout/
 │   ├── fake_vision.py             P3
 │   ├── fake_mapper.py             P3
 │   ├── fake_brain.py              P4  (scripted run → writes to STDB so dashboard can be built alone)
-│   └── replay_run.py              P4  (re-plays events.jsonl into a fresh STDB db)
+│   └── replay_run.py              P4  (re-plays a run's stdb_calls.jsonl journal into STDB)
 ├── scripts/                       P4  _env.sh, dev_up.sh, publish_stdb.sh, gen_bindings.sh, reset_db.sh
 └── data/                          gitignored; runtime (GX10 /data symlink)
 ```
@@ -211,6 +212,7 @@ CORS: brain, mapper and vision allow origin `http://192.168.50.30:5173` and `htt
 
 ## 5. IDs
 See [AGENTS.md §4](../AGENTS.md#4-conventions). The brain mints `r_ m_ t_ c_ v_ a_`; the Pi mints `s_ k_ p_` (they're scoped by `run_id`, which the brain sends in `start_run` cmd).
+Because ids restart every run, the DB keys run-scoped rows by `"<runId>|<id>"` (02 §5); an id alone is only unique together with its run_id.
 
 ## 6. Schemas
 

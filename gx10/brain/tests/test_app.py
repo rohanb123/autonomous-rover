@@ -33,8 +33,19 @@ class FakeVision:
         pass
 
 
+class FakeOverhead:
+    def __init__(self, url):
+        self.health = "down"
+
+    def start(self):
+        pass
+
+    async def stop(self):
+        pass
+
+
 class FakeFsm:
-    def __init__(self, link, vision, db, priors, mapper=None):
+    def __init__(self, link, vision, db, priors, mapper=None, overhead=None):
         self.state, self.active_cand, self.cands, self.busy = "IDLE", "", {}, False
         self.calls = []
         self.on_run_ended = None
@@ -78,6 +89,7 @@ def client(monkeypatch):
     monkeypatch.setattr(app_mod, "RoverLink", FakeLink)
     monkeypatch.setattr(app_mod, "VisionClient", FakeVision)
     monkeypatch.setattr(app_mod, "MapperClient", FakeVision)
+    monkeypatch.setattr(app_mod, "OverheadLink", FakeOverhead)
     monkeypatch.setattr(app_mod, "RunFSM", FakeFsm)
     monkeypatch.setattr(
         nlu, "_parse_grok", lambda text: (_ for _ in ()).throw(ConnectionError("offline"))

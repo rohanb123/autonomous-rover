@@ -21,6 +21,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from brain import settings
 from brain.fsm import FsmBusy, NotNow, RunFSM
+from brain.overhead_link import OverheadLink
 from brain.rover_link import RoverError, RoverLink
 from brain.stdb_writer import BrainDb
 from brain.vision_client import MapperClient, VisionClient, load_priors
@@ -49,8 +50,8 @@ def _url(env_key: str, service: str) -> str:
 class Brain:
     """Process-wide state. One run at a time."""
 
-    def __init__(self, db: BrainDb, link: RoverLink, fsm: RunFSM) -> None:
-        self.db, self.link, self.fsm = db, link, fsm
+    def __init__(self, db: BrainDb, link: RoverLink, fsm: RunFSM, overhead: OverheadLink) -> None:
+        self.db, self.link, self.fsm, self.overhead = db, link, fsm, overhead
         self.run_id = ""
         self.ids = IdGen()
         self.missions: dict[str, dict] = {}
@@ -88,7 +89,8 @@ async def lifespan(app: FastAPI):
     link = RoverLink(_ws_url("ROVER_URL", "rover_ws"))
     vision = VisionClient(_url("VISION_URL", "vision"))
     mapper = MapperClient(_url("MAPPER_URL", "mapper"))
-    b = Brain(db, link, RunFSM(link, vision, db, load_priors(), mapper))
+    overhead = OverheadLink(_ws_url("OVERHEAD_WS_URL", "overhead"))
+    b = Brain(db, link, RunFSM(link, vision, db, load_priors(), mapper, overhead), overhead)
 
     def on_run_ended(run_id: str) -> None:
         if b.run_id == run_id:
@@ -108,10 +110,12 @@ async def lifespan(app: FastAPI):
     )
     app.state.brain = b
     link.start()
+    overhead.start()
     status = asyncio.create_task(_status_loop(b))
     yield
     status.cancel()
     await link.stop()
+    await overhead.stop()
     await vision.close()
     await mapper.close()
     db.close()
@@ -148,11 +152,10 @@ async def _probe(client: httpx.AsyncClient, url: str, any_reply_ok: bool = False
 @app.get("/api/health", response_model=HealthResp)
 async def health() -> HealthResp:
     async with httpx.AsyncClient() as client:
-        stdb, vision, mapper, overhead = await asyncio.gather(
+        stdb, vision, mapper = await asyncio.gather(
             _probe(client, settings.env("STDB_URL", "http://192.168.50.10:3000") + "/v1/ping"),
             _probe(client, _url("VISION_URL", "vision") + "/health"),
             _probe(client, _url("MAPPER_URL", "mapper") + "/health"),
-            _probe(client, _url("OVERHEAD_URL", "overhead"), any_reply_ok=True),
         )
     return HealthResp(
         brain="ok",
@@ -160,7 +163,7 @@ async def health() -> HealthResp:
         vision=vision,
         mapper=mapper,
         stdb=stdb,
-        overhead=overhead,
+        overhead=brain_of_app().overhead.health,
     )
 
 

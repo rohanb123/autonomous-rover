@@ -1,6 +1,6 @@
 // App shell: layout grid, run selection, live/replay mode, scrub time (docs/06 §2–§4).
-import { useCallback, useEffect, useMemo, useRef, useState, type ComponentType } from 'react';
-import * as mapModule from './map/MapView';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import MapView from './map/MapView';
 import ConnectionBadge from './panels/ConnectionBadge';
 import EStopButton from './panels/EStopButton';
 import EventLog from './panels/EventLog';
@@ -14,25 +14,9 @@ import TaskQueuePanel from './panels/TaskQueuePanel';
 import TimelineScrubber, { type PlaySpeed, type ScrubTick } from './panels/TimelineScrubber';
 import { latest, useGlobalTables, useRunTables, useScrubbed } from './stdb/hooks';
 import { crossed, runWindow } from './stdb/scrub';
-import type {
-  Candidate, GlobalTile, LocalMapTile, Pose, RoverStatus, Visit,
-} from './module_bindings/types';
 
 type Mode = 'live' | 'replay';
 
-// docs/06 §4. MapView is P3's; render it when the module has a default export.
-type MapViewProps = {
-  mode: Mode;
-  poses: Pose[];
-  localTiles: LocalMapTile[];
-  globalTiles: GlobalTile[];
-  candidates: Candidate[];
-  visits: Visit[];
-  status?: RoverStatus;
-  selectedCandId?: string;
-  onSelectCand: (candId: string) => void;
-};
-const MapView = (mapModule as { default?: ComponentType<MapViewProps> }).default;
 
 export default function App() {
   const { runs, roverStatus } = useGlobalTables();
@@ -119,7 +103,6 @@ export default function App() {
   const visit = visits.filter((v) => v.candId === selectedId).sort((a, b) => b.tUnix - a.tUnix)[0];
   const analysis = analyses.filter((a) => a.candId === selectedId).sort((a, b) => b.tUnix - a.tUnix)[0];
   const keyframe = latest(keyframes.filter((k) => k.stationId === selected?.stationId));
-  const pose = latest(poses);
   const ticks: ScrubTick[] = [
     ...t.poses.map((p) => ({ t: p.tUnix, kind: 'pose' as const })),
     ...t.events.map((e) => ({ t: e.tUnix, kind: 'event' as const })),
@@ -141,38 +124,18 @@ export default function App() {
       </header>
 
       <main className="map-area">
-        {MapView ? (
-          <MapView
-            mode={mode}
-            poses={poses}
-            localTiles={localTiles}
-            globalTiles={mode === 'replay' && run?.fused ? [...t.globalTiles] : []}
-            candidates={candidates}
-            visits={visits}
-            status={roverStatus?.runId === runId ? roverStatus : undefined}
-            selectedCandId={selectedId}
-            onSelectCand={selectCand}
-          />
-        ) : (
-          <div className="map-placeholder">
-            <p><b>MapView (P3)</b> mounts here.</p>
-            <p className="meta">
-              {run ? `${run.runId} · ${run.status}${run.fused ? ' · fused' : ''}` : 'no run selected'}
-              {pose && ` · rover (${pose.x.toFixed(2)}, ${pose.y.toFixed(2)}) ${pose.headingDeg.toFixed(0)}°`}
-            </p>
-            <p className="meta">
-              {poses.length} poses · {localTiles.length} local tiles · {t.globalTiles.length} global tiles ·{' '}
-              {candidates.length} candidates · {visits.length} visits · {analyses.length} analyses
-            </p>
-            <div className="pins">
-              {[...candidates].sort((a, b) => b.score - a.score).map((c) => (
-                <button key={c.candId} type="button" className={c.candId === selectedId ? 'on' : ''} onClick={() => selectCand(c.candId)}>
-                  {c.rank > 0 ? `#${c.rank} ` : ''}{c.candId} {c.score.toFixed(2)}
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
+        {/* MapView (P3), docs/06 §4 MapViewProps */}
+        <MapView
+          mode={mode}
+          poses={poses}
+          localTiles={localTiles}
+          globalTiles={mode === 'replay' && run?.fused ? [...t.globalTiles] : []}
+          candidates={candidates}
+          visits={visits}
+          status={roverStatus?.runId === runId ? roverStatus : undefined}
+          selectedCandId={selectedId}
+          onSelectCand={selectCand}
+        />
       </main>
 
       <aside className="side">
