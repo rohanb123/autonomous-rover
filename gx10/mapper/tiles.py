@@ -2,7 +2,7 @@
 
 Base64 strings must stay under the reducer limits: keyframe thumbB64 <= 150,000 chars,
 local tile pngB64 <= 700,000 chars. Both helpers shrink the image until they fit.
-`slice_mosaic` (global tiles) lands with /fuse.
+`slice_mosaic` cuts the fused mission-frame mosaic into global tiles (docs/06 §6 convention).
 """
 
 from __future__ import annotations
@@ -89,3 +89,39 @@ def bev_tile(png: bytes, res_m_px: float, max_px: int = 512) -> Tile:
         if len(out) <= TILE_MAX_CHARS or max(img.size) <= _MIN_PX:
             return Tile(out, img.width, img.height, width_m / img.width)
         img = _shrink(img, max(img.size) * 3 // 4)
+
+
+def slice_mosaic(
+    mosaic: np.ndarray, origin_xy: tuple[float, float], res_m_px: float, tile_px: int = 512
+) -> list[dict]:
+    """Cut a mission-frame mosaic (H×W×4 RGBA, image up = +x, image left = +y) into global tiles.
+
+    origin_xy is the mission (x, y) of the mosaic's top-left pixel corner (its max-x, max-y
+    corner), so a pixel (col, row) sits at x = X0 − row·res, y = Y0 − col·res (docs/06 §6).
+    Returns one dict per non-empty tile: ix (column index), iy (row index), origin_x, origin_y
+    (the tile's own top-left corner), w_px, h_px, png_b64. Fully transparent tiles are skipped.
+    """
+    x0, y0 = origin_xy
+    h, w = mosaic.shape[:2]
+    tiles = []
+    for iy, row0 in enumerate(range(0, h, tile_px)):
+        for ix, col0 in enumerate(range(0, w, tile_px)):
+            block = mosaic[row0 : row0 + tile_px, col0 : col0 + tile_px]
+            if block.shape[2] == 4 and not block[..., 3].any():
+                continue
+            img = Image.fromarray(block)
+            b64 = _png_b64(img)
+            if len(b64) > TILE_MAX_CHARS:  # keep size/scale; drop to a 256-colour palette
+                b64 = _png_b64(img.quantize(colors=256, method=Image.Quantize.FASTOCTREE))
+            tiles.append(
+                {
+                    "ix": ix,
+                    "iy": iy,
+                    "origin_x": x0 - row0 * res_m_px,
+                    "origin_y": y0 - col0 * res_m_px,
+                    "w_px": block.shape[1],
+                    "h_px": block.shape[0],
+                    "png_b64": b64,
+                }
+            )
+    return tiles
