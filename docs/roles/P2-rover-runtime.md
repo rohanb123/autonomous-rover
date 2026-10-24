@@ -153,7 +153,10 @@ class ArucoTracker:
 Unit tests in `rover/tests/`: `test_bev.py` (pixel→xy on a synthetic homography), `test_proposals.py` (finds 3 dark blobs on a synthetic image), `test_safety.py` (watchdog timing with a fake clock), `test_protocol.py` (every op round-trips through pydantic).
 
 ## 8. Mocks
-- **You provide** `mocks/fake_rover.py`: same WS protocol and timing (station ≈ 5 s), poses moving as commanded, canned station bundles from `mocks/data/stations/` uploaded to the real mapper (or fake_mapper), and `scoop` returning a canned `present.jpg`. P4 and P3 build against it from I0.
+- **You provide** `mocks/fake_rover.py`: same WS protocol and timing (station ≈ 5 s), poses moving as commanded, station bundles uploaded to the real mapper (or fake_mapper), and `scoop` returning a `present.jpg`. Images are **generated in code** (PIL: sand grain + dark blobs), not read from `mocks/data/stations/` — no image files in git, and `--seed` makes a run replayable. P4 and P3 build against it from I0.
+  - Flags: `--host --port --mapper --speed-scale --noise --fail-rate --seed --no-upload`. `--speed-scale` compresses *simulated* time only: the 1.0 s heartbeat watchdog, the 0.5 s ack budget and the per-op deadlines stay in real time, so a client that does not heartbeat still gets its motion cut short.
+  - Deliberate differences from the real Pi: no `:8080` snapshot server (`snapshot` returns the documented URL without serving it), `turn` always reports `method:"gyro"`, and `--no-upload` fabricates a successful mapper reply.
+  - Contract tests live in `rover/tests/test_protocol.py` and cover every op in `Op`.
 - **You use** `mocks/fake_mapper.py` (P3) until the real mapper is up.
 
 ## 9. Watch-outs
