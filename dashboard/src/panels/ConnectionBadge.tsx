@@ -32,5 +32,5 @@ export default function ConnectionBadge({ roverStatus }: { roverStatus?: RoverSt
 }
 
 function Dot({ ok, label }: { ok: boolean; label: string }) {
-  return <span className={`dot ${ok ? 'ok' : 'bad'}`} title={ok ? 'ok' : 'down'}>● {label}</span>;
+  return <span className={`dot ${ok ? 'ok' : 'bad'}`} title={ok ? 'ok' : 'down'}>{label}</span>;
 }

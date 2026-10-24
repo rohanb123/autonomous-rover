@@ -1,4 +1,5 @@
 import type { Candidate, TaskQueue } from '../module_bindings/types';
+import CountUp from './CountUp';
 
 // Top-k (rank ≥ 0) with score, category and reason, then the task queue (docs/06 §5).
 export default function TaskQueuePanel({ tasks, candidates }: { tasks: readonly TaskQueue[]; candidates: readonly Candidate[] }) {
@@ -11,7 +12,7 @@ export default function TaskQueuePanel({ tasks, candidates }: { tasks: readonly 
         <ol className="topk">
           {topk.map((c) => (
             <li key={c.candId}>
-              <span className="rank">#{c.rank}</span> <b>{c.candId}</b> {c.score.toFixed(2)} {c.category}{' '}
+              <span className="rank">#{c.rank}</span> <b>{c.candId}</b> <span className="score"><CountUp value={c.score} /></span> {c.category}{' '}
               <span className={`status s-${c.status}`}>{c.status}</span>
               <div className="reason">{c.reason}</div>
             </li>

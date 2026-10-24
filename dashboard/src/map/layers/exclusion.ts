@@ -2,7 +2,7 @@
 import type { Visit } from '../../module_bindings/types';
 import { type Camera, worldToScreen } from '../camera';
 
-export const RING_COLOR = 'rgba(232, 225, 217, 0.7)';
+export const RING_COLOR = 'rgba(255, 255, 255, 0.5)';
 
 export function draw(ctx: CanvasRenderingContext2D, cam: Camera, visits: readonly Visit[]): void {
   ctx.save();

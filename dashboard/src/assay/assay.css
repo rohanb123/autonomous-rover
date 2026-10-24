@@ -5,8 +5,8 @@
   padding: 4px 8px;
   border: 1px solid var(--bad);
   color: var(--bad);
-  font-size: 12px;
-  letter-spacing: 0.04em;
+  font: 500 10px var(--display);
+  letter-spacing: 0.22em;
   text-transform: uppercase;
 }
 .bradford-top { display: grid; grid-template-columns: 96px 1fr; gap: 10px; align-items: center; }
@@ -17,7 +17,7 @@
 .cuvette-wrap figcaption { margin-top: 4px; color: var(--muted); font-size: 10px; line-height: 1.3; }
 .bradford-readout p { margin: 0 0 2px; }
 .bradford-conc { font: 22px/1.2 var(--mono); color: var(--text); }
-.bradford-verdict { margin-top: 6px; font-weight: 700; letter-spacing: 0.08em; color: var(--accent); }
+.bradford-verdict { margin-top: 6px; font: 600 13px var(--display); letter-spacing: 0.24em; color: var(--accent); }
 
 .curve { margin: 0; }
 .curve figcaption, .curve-fit-eq { margin: 0; font-size: 12px; }
@@ -33,12 +33,12 @@
 .curve-sample { fill: var(--accent); }
 .curve-cite { margin: 2px 0 0; color: var(--muted); font-size: 10px; line-height: 1.3; }
 
-.verdict-track { position: relative; display: flex; height: 10px; border-radius: 5px; overflow: hidden; }
-.zone-below { background: #3a342e; }
-.zone-low { background: var(--warn); }
-.zone-elevated { background: var(--accent); }
+.verdict-track { position: relative; display: flex; height: 10px; border-radius: 0; overflow: hidden; }
+.zone-below { background: var(--grey-panel, #1a1a1a); }
+.zone-low { background: #3a3a3a; }
+.zone-elevated { background: #6a6a6a; }
 .verdict-marker {
-  position: absolute; top: -2px; width: 2px; height: 14px; background: var(--text);
+  position: absolute; top: -3px; width: 2px; height: 16px; background: var(--text); box-shadow: 0 0 8px rgba(255, 255, 255, 0.6);
   transform: translateX(-1px);
 }
 .verdict-labels { display: flex; justify-content: space-between; color: var(--muted); font-size: 10px; margin-top: 2px; }

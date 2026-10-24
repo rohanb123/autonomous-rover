@@ -1,21 +1,28 @@
 import type { Pose, RoverStatus, Telemetry } from '../module_bindings/types';
 import { latest } from '../stdb/hooks';
-import { fmtDeg, fmtNum, fmtTime } from './format';
+import CountUp from './CountUp';
+import { fmtTime } from './format';
 
-// Latest telemetry + rover status + pose (docs/06 §5).
+// Latest telemetry + rover status + pose (docs/06 §5), as a flight-style readout.
 export default function HealthPanel({ telemetry, roverStatus, poses }:
   { telemetry: readonly Telemetry[]; roverStatus?: RoverStatus; poses: readonly Pose[] }) {
   const t = latest(telemetry);
   const p = latest(poses);
+  const item = (k: string, v: React.ReactNode) => (
+    <span key={k}><span className="k">{k}</span><span className="v">{v}</span></span>
+  );
   return (
     <section className="panel health">
-      <span>state <b>{roverStatus?.state ?? t?.state ?? '—'}</b></span>
-      <span>pose {p ? `(${p.x.toFixed(2)}, ${p.y.toFixed(2)}) ${fmtDeg(p.headingDeg)} [${p.source}]` : '—'}</span>
-      <span>battery {t && t.batteryV >= 0 ? `${fmtNum(t.batteryV)} V` : '—'}</span>
-      <span>cpu {t ? `${t.cpuTempC.toFixed(0)} °C` : '—'}</span>
-      <span>link {roverStatus ? (roverStatus.linkOk ? 'ok' : 'down') : '—'}</span>
-      <span>uplink backlog {t?.uplinkBacklog ?? '—'}</span>
-      <span>updated {roverStatus ? fmtTime(roverStatus.updatedUnix) : '—'}</span>
+      {item('State', roverStatus?.state ?? t?.state ?? '—')}
+      {item('X m', p ? <CountUp value={p.x} /> : '—')}
+      {item('Y m', p ? <CountUp value={p.y} /> : '—')}
+      {item('Heading', p ? <><CountUp value={p.headingDeg} digits={0} />°</> : '—')}
+      {item('Pose src', p?.source ?? '—')}
+      {item('Battery', t && t.batteryV >= 0 ? <><CountUp value={t.batteryV} /> V</> : '—')}
+      {item('CPU', t ? <><CountUp value={t.cpuTempC} digits={0} /> °C</> : '—')}
+      {item('Link', roverStatus ? (roverStatus.linkOk ? 'OK' : 'DOWN') : '—')}
+      {item('Backlog', t?.uplinkBacklog ?? '—')}
+      {item('Updated', roverStatus ? fmtTime(roverStatus.updatedUnix) : '—')}
     </section>
   );
 }

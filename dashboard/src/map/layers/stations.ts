@@ -6,8 +6,8 @@ export const STATION_PX = 7;
 
 export function draw(ctx: CanvasRenderingContext2D, cam: Camera, tiles: readonly LocalMapTile[]): void {
   ctx.save();
-  ctx.fillStyle = '#e8e1d9';
-  ctx.strokeStyle = '#12100f';
+  ctx.fillStyle = '#ffffff';
+  ctx.strokeStyle = '#000000';
   ctx.lineWidth = 1;
   const h = STATION_PX / 2;
   for (const t of tiles) {

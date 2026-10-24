@@ -98,7 +98,7 @@ interface GpuMesh {
 
 type Program = { prog: WebGLProgram; u: Record<string, WebGLUniformLocation | null> };
 
-export const BG: [number, number, number] = [0.059, 0.051, 0.047]; // #0f0d0c, the map's background
+export const BG: [number, number, number] = [0, 0, 0]; // #000, the map's background
 const BASE: [number, number, number] = [0.13, 0.115, 0.105];
 const LIGHT = norm([-0.45, 0.35, 0.82]);
 

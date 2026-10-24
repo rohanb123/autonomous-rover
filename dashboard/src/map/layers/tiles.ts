@@ -90,7 +90,7 @@ export function draw(ctx: CanvasRenderingContext2D, cam: Camera, rows: TileRows,
 
 function placeholder(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number): void {
   ctx.save();
-  ctx.strokeStyle = 'rgba(232, 225, 217, 0.25)';
+  ctx.strokeStyle = 'rgba(255, 255, 255, 0.18)';
   ctx.setLineDash([4, 4]);
   ctx.strokeRect(x, y, w, h);
   ctx.restore();
