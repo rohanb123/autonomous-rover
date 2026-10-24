@@ -68,15 +68,24 @@ class FakeBus:
         self.closed = True
 
 
+def _clamp16(value: int) -> int:
+    """Saturate to int16, the way a real sensor does at full scale.
+
+    Wrapping instead would make an over-range reading come back with the *opposite sign*,
+    which no accelerometer does and which would let a test pass for the wrong reason.
+    """
+    return max(-32768, min(32767, int(value)))
+
+
 def _be16(value: int) -> tuple[int, int]:
     """Signed 16-bit to (high, low) big-endian two's-complement bytes."""
-    raw = value & 0xFFFF
+    raw = _clamp16(value) & 0xFFFF
     return (raw >> 8) & 0xFF, raw & 0xFF
 
 
 def _le16(value: int) -> tuple[int, int]:
     """Signed 16-bit to (low, high) little-endian bytes (the ADXL345's order)."""
-    raw = value & 0xFFFF
+    raw = _clamp16(value) & 0xFFFF
     return raw & 0xFF, (raw >> 8) & 0xFF
 
 
