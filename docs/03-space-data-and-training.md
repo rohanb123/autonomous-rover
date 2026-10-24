@@ -80,6 +80,15 @@ Top target types in the file (rows): Bedrock 22,252 · Rock 8,264 · Passive Sky
 - `metrics.json`: visual head AUC on MSL v2.1 test **≥ 0.80** (target; if lower, still ship and report it).
 - Category head macro-F1 reported; arena hold-out (≥ 20 images) accuracy reported, not gated.
 - `category_priors.json` (flat priors) and `category_priors_detail.json` (human and AEGIS shares and the counts used) exist.
+
+**Results, 2026-10-24** (`vit-b-16-siglip+lr-v1`: SigLIP ViT-B/16 `webli` embeddings + logistic regression, balanced class weights, C picked on validation; P3 laptop, before arena few-shot):
+| Head | Test set | Result |
+|---|---|---|
+| visual | MSL v2.1 test, 379 images | **AUC 0.993** (target 0.80 met) |
+| category | MSL v2.1 test, 332 images | macro-F1 0.53, accuracy 0.77. Per class F1: bedrock 0.90, pebble 0.75, layered 0.59, sand 0.56, veined 0.27 (mostly confused with pebble = MSL "Close-up rock"), float_rock 0.13 (1 test image) |
+| terrain | AI4Mars test_min3, 469 crops | accuracy 0.94, macro-F1 0.94 over soil/bedrock/sand. big_rock: 81 train crops, none in test (128 px crops are rarely 80 % big rock) |
+
+Reproduce: `python ml/build_embeddings.py && python ml/train_heads.py && python ml/eval.py`. These are Mars-image numbers; the arena hold-out comes with the few-shot step.
 - `vision /score` latency < 300 ms for 10 crops on the GX10.
 
 ## 6. Licenses and attribution (put in README credits at the end)
