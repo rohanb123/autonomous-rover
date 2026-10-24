@@ -215,6 +215,7 @@ class RateLimitedWriter:
     def submit(self, key: str, reducer: str, *args) -> None: ...
 ```
 - **Never call STDB on the control path.** The brain's FSM must not block on a DB write; writes go through a queue. If the DB is down, the rover keeps going and the events.jsonl log is the backup (`mocks/replay_run.py` can re-insert it).
+- **Journal (replay source).** Every `RateLimitedWriter` submit from the brain and the mapper is also appended to `data/runs/<run>/stdb_calls.jsonl` (`marsrover_shared.journal`), including coalesced pose/telemetry updates. `mocks/replay_run.py <run>` re-sends it in order; verified to rebuild a run row-for-row. `events.jsonl` stays the human-readable log.
 
 ## 9. Subscriptions (dashboard, `dashboard/src/stdb/`)
 - One `DbConnection` for the app, memoized: `.withUri(import.meta.env.VITE_STDB_URI ?? 'ws://192.168.50.10:3000').withDatabaseName('marsrover')`.

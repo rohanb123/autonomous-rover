@@ -114,7 +114,7 @@ Commands from the dashboard run in order through the FSM. `stop` and E-STOP skip
 - **You use** `fake_rover.py` (P2), `fake_vision.py` and `fake_mapper.py` (P3).
 
 ## 9. Watch-outs
-- **Never block the control loop on STDB** (queue + rate limit; events.jsonl backup).
+- **Never block the control loop on STDB** (queue + rate limit; every write is journaled to `stdb_calls.jsonl`, and `mocks/replay_run.py` rebuilds the run from it).
 - E-STOP path: dashboard → `/api/estop` → `RoverLink.estop()` directly, no FSM lock. Test it every milestone.
 - Grok needs internet: on timeout (`asr_timeout_s` / `nlu_timeout_s`) or any API error, fall back to `faster-whisper` / the regex parser, list what it assumed, and log which path ran (`event` kind `voice_offline`). Always validate Grok's output with the `Mission` pydantic model too, and clamp to the 00 §6.1 ranges.
 - `XAI_API_KEY` lives in `config/.env` only. Never log it or send it to the dashboard.
