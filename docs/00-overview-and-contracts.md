@@ -94,7 +94,7 @@ ares-scout/
 │   ├── brain/                     P4 (including voice/)
 │   │   ├── requirements.txt
 │   │   ├── settings.py            config/run.yaml loader (§8 constants)
-│   │   ├── tests/                 unit tests (scoring, heap, dedupe, route, run.yaml ↔ §8)
+│   │   ├── tests/                 unit tests + stub_rover.py (protocol stand-in until mocks/fake_rover.py)
 │   │   ├── app.py                 FastAPI :8000 (REST + WS) – dashboard command API
 │   │   ├── fsm.py                 run/mission state machine
 │   │   ├── planner.py             station plan, heap top-k, NN route, replan on skip
@@ -104,6 +104,7 @@ ares-scout/
 │   │   ├── rover_link.py          WS client to Pi, cmd tracking, heartbeat
 │   │   ├── overhead_link.py       subscribes to overhead :8300
 │   │   ├── stdb_writer.py         rate-limited writes (poses, status) via StdbClient
+│   │   ├── vision_client.py       /score client + category priors loader
 │   │   └── voice/                 P4  (ASR + NLU)
 │   │       ├── requirements.txt
 │   │       ├── asr.py             audio bytes → text (Grok STT; faster-whisper offline backup)

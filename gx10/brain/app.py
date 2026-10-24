@@ -1,8 +1,8 @@
 """Brain service, FastAPI :8000: the dashboard's only command API (doc 00 §6.11).
 
-Built so far: runs, text and voice missions (Grok with the offline backup), health.
-Still to come with the rover link and FSM: quick commands, E-STOP, approve, the campaign
-itself. Those endpoints answer 503 until then, so the dashboard shows an honest error.
+Built so far: runs; text and voice missions (Grok with the offline backup) that start the
+campaign (SURVEY -> PLAN); pause / resume / stop / E-STOP; health. Still to come with the
+INVESTIGATE phase: skip, come_back, approve. Those answer 503 until then.
 
 Run (from gx10/):  uvicorn brain.app:app --port 8000
 """
@@ -20,7 +20,10 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 
 from brain import settings
+from brain.fsm import FsmBusy, RunFSM
+from brain.rover_link import RoverError, RoverLink
 from brain.stdb_writer import BrainDb
+from brain.vision_client import VisionClient, load_priors
 from brain.voice import asr, nlu
 from marsrover_shared.ids import IdGen, new_run_id
 from marsrover_shared.schemas import (
@@ -46,8 +49,8 @@ def _url(env_key: str, service: str) -> str:
 class Brain:
     """Process-wide state. One run at a time."""
 
-    def __init__(self, db: BrainDb) -> None:
-        self.db = db
+    def __init__(self, db: BrainDb, link: RoverLink, fsm: RunFSM) -> None:
+        self.db, self.link, self.fsm = db, link, fsm
         self.run_id = ""
         self.ids = IdGen()
         self.missions: dict[str, dict] = {}
@@ -61,12 +64,48 @@ class Brain:
         return self.run_id
 
 
+def _ws_url(env_key: str, service: str) -> str:
+    svc = NETWORK["services"][service]
+    host = NETWORK["hosts"][svc["host"]]["ip"]
+    return settings.env(env_key, f"ws://{host}:{svc['port']}{svc.get('path', '')}")
+
+
+async def _status_loop(b: Brain) -> None:
+    """rover_status at 2 Hz even when the link is down, so the dashboard can tell."""
+    while True:
+        tel = b.link.last_telemetry if b.link.connected else None
+        estop = bool(tel and tel.estop) or b.fsm.state == "ESTOP"
+        state = tel.state if tel else "UNKNOWN"
+        pose = tel.pose if tel else None
+        b.db.status(b.run_id, state, estop, pose, b.fsm.state, b.fsm.active_cand, b.link.connected)
+        await asyncio.sleep(0.5)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings.load_env()
     db = BrainDb(StdbClient.from_env("STDB_TOKEN_BRAIN"))
-    app.state.brain = Brain(db)
+    link = RoverLink(_ws_url("ROVER_URL", "rover_ws"))
+    vision = VisionClient(_url("VISION_URL", "vision"))
+    b = Brain(db, link, RunFSM(link, vision, db, load_priors()))
+
+    def on_telemetry(tel):
+        if b.run_id:
+            db.pose(b.run_id, tel.pose, tel.t)
+            db.telemetry(b.run_id, tel)
+
+    link.on_telemetry = on_telemetry
+    link.on_event = lambda e: db.event("rover", f"rover event {e.kind}", "warn", e.detail)
+    link.on_connection = lambda up: db.event(
+        "rover", f"rover link {'up' if up else 'down'}", "info" if up else "warn"
+    )
+    app.state.brain = b
+    link.start()
+    status = asyncio.create_task(_status_loop(b))
     yield
+    status.cancel()
+    await link.stop()
+    await vision.close()
     db.close()
 
 
@@ -81,6 +120,10 @@ app.add_middleware(
 
 def brain_of(request: Request) -> Brain:
     return request.app.state.brain
+
+
+def brain_of_app() -> Brain:
+    return app.state.brain
 
 
 # --- health ----------------------------------------------------------------------------------
@@ -105,7 +148,12 @@ async def health() -> HealthResp:
             _probe(client, _url("OVERHEAD_URL", "overhead"), any_reply_ok=True),
         )
     return HealthResp(
-        brain="ok", rover_link="down", vision=vision, mapper=mapper, stdb=stdb, overhead=overhead
+        brain="ok",
+        rover_link="ok" if brain_of_app().link.connected else "down",
+        vision=vision,
+        mapper=mapper,
+        stdb=stdb,
+        overhead=overhead,
     )
 
 
@@ -126,7 +174,9 @@ async def run_start(req: RunStartReq, request: Request) -> CommandAccepted:
 async def run_end(request: Request) -> CommandAccepted:
     b = brain_of(request)
     run_id = b.require_run()
-    # Until the FSM exists this ends the run immediately (no return-home / fuse yet).
+    if b.fsm.busy:
+        await b.fsm.stop()
+    # Until RETURN exists this ends the run where the rover is (no return-home / fuse yet).
     b.db.event("run", f"Run {run_id} ended")
     b.db.run_ended(run_id, "done")
     b.run_id = ""
@@ -142,6 +192,11 @@ async def _accept_mission(b: Brain, text: str, via: str) -> CommandAccepted:
     mission, source = await asyncio.to_thread(nlu.parse_mission_ex, text, run_id, None, mission_id)
     b.missions[mission_id] = mission
     b.db.mission(mission, "parsed")
+    try:
+        b.fsm.start_mission(mission, b.ids)
+    except FsmBusy as e:
+        b.db.mission(mission, "rejected")
+        raise HTTPException(409, f"{mission_id} rejected: {e}") from e
     if source == "regex":
         b.db.event(
             "voice_offline", f"{mission_id} parsed offline (regex): Grok unreachable", "warn"
@@ -178,37 +233,59 @@ async def mission_voice(request: Request) -> CommandAccepted:
     if source != "grok":
         b.db.event("voice_offline", f"Transcribed offline ({source})", "warn")
     b.db.event("voice", f'Heard: "{text}"', data={"source": source})
-    if quick := nlu.parse_quick(text):
-        # Quick commands need the rover link; record them so nothing is silently dropped.
-        b.db.event(
-            "quick", f"Voice quick command '{quick}' (not executed: no rover link yet)", "warn"
-        )
-        raise HTTPException(
-            503, f"Heard quick command '{quick}', but the rover link isn't built yet."
-        )
+    if cmd := nlu.parse_quick(text):
+        b.db.event("quick", f"Voice quick command '{cmd}'")
+        return await _quick(b, cmd)
     return await _accept_mission(b, text, "voice")
 
 
-# --- not built yet: need the rover link + FSM ----------------------------------------------
+# --- rover control --------------------------------------------------------------------------------
 
-_NEEDS_ROVER = "Needs the rover link and FSM, which aren't built yet."
-
-
-@app.post("/api/quick")
-async def quick(req: QuickReq) -> None:
-    raise HTTPException(503, f"quick '{req.cmd}': {_NEEDS_ROVER}")
+_NEEDS_INVESTIGATE = "needs the INVESTIGATE phase, which isn't built yet."
 
 
-@app.post("/api/estop")
-async def estop() -> None:
-    raise HTTPException(503, f"E-STOP: {_NEEDS_ROVER} Use the physical kill switch.")
+async def _quick(b: Brain, cmd: str) -> CommandAccepted:
+    if cmd == "pause":
+        b.fsm.pause()
+    elif cmd == "resume":
+        b.fsm.resume()
+    elif cmd == "stop":
+        await b.fsm.stop()
+    elif cmd == "status":
+        link = "up" if b.link.connected else "down"
+        b.db.event("status", f"FSM {b.fsm.state}; {len(b.fsm.cands)} candidates; link {link}")
+    else:  # skip, come_back
+        raise HTTPException(503, f"'{cmd}' {_NEEDS_INVESTIGATE}")
+    return b.accepted()
 
 
-@app.post("/api/estop/clear")
-async def estop_clear() -> None:
-    raise HTTPException(503, f"clear E-STOP: {_NEEDS_ROVER}")
+@app.post("/api/quick", response_model=CommandAccepted)
+async def quick(req: QuickReq, request: Request) -> CommandAccepted:
+    return await _quick(brain_of(request), req.cmd)
+
+
+@app.post("/api/estop", response_model=CommandAccepted)
+async def estop(request: Request) -> CommandAccepted:
+    b = brain_of(request)
+    try:
+        await b.fsm.estop()
+    except (RoverError, OSError) as e:
+        raise HTTPException(
+            503, f"E-STOP could not reach the rover ({e}): use the physical kill switch!"
+        ) from e
+    return b.accepted()
+
+
+@app.post("/api/estop/clear", response_model=CommandAccepted)
+async def estop_clear(request: Request) -> CommandAccepted:
+    b = brain_of(request)
+    try:
+        await b.fsm.clear_estop()
+    except RoverError as e:
+        raise HTTPException(503, f"clear E-STOP failed: {e}") from e
+    return b.accepted()
 
 
 @app.post("/api/approve")
 async def approve(req: ApproveReq) -> None:
-    raise HTTPException(503, f"approve {req.mission_id}: {_NEEDS_ROVER}")
+    raise HTTPException(503, f"approve {req.mission_id}: {_NEEDS_INVESTIGATE}")

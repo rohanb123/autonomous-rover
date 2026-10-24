@@ -4,14 +4,26 @@ from brain.scoring import category_score, explain, final_score
 from marsrover_shared.schemas import Mission, Pose
 
 MISSION = Mission(
-    mission_id="m_0001", run_id="r_1", text="t", radius_m=1.5, k=3, categories=["float_rock"],
-    sample=True, return_home=True, max_duration_s=900, mode="act",
-)  # fmt: skip
+    mission_id="m_0001",
+    run_id="r_1",
+    text="t",
+    radius_m=1.5,
+    k=3,
+    categories=["float_rock"],
+    sample=True,
+    return_home=True,
+    max_duration_s=900,
+    mode="act",
+)
 PRIORS = {"float_rock": 1.0, "layered": 0.5}
 ITEM = {
-    "novelty": 0.64, "visual": 0.71, "pickable": 0.9, "xy": (1.12, 0.21), "size_m": 0.028,
+    "novelty": 0.64,
+    "visual": 0.71,
+    "pickable": 0.9,
+    "xy": (1.12, 0.21),
+    "size_m": 0.028,
     "category_probs": {"float_rock": 0.55, "layered": 0.2, "bedrock": 0.25},
-}  # fmt: skip
+}
 
 
 def test_category_score_weights_unrequested_by_0_2():

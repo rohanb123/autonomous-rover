@@ -4,8 +4,15 @@ import pytest
 
 from brain.voice import nlu
 
-DEFAULTS = {"radius_m": 1.5, "k": 3, "categories": ["any"], "sample": True,
-            "return_home": True, "max_duration_s": 900, "mode": "act"}  # fmt: skip
+DEFAULTS = {
+    "radius_m": 1.5,
+    "k": 3,
+    "categories": ["any"],
+    "sample": True,
+    "return_home": True,
+    "max_duration_s": 900,
+    "mode": "act",
+}
 SPEC = "Survey within a meter and a half, find the three most interesting rocks, sample them, and come back."  # noqa: E501
 
 
@@ -76,8 +83,15 @@ def test_unstated_fields_use_defaults_with_assumptions(offline):
 
 
 def test_grok_result_is_clamped_and_validated(monkeypatch):
-    fields = {"radius_m": 9.0, "k": 3, "categories": ["float_rock", "granite"], "sample": True,
-              "return_home": True, "max_duration_s": 900, "mode": "act"}  # fmt: skip
+    fields = {
+        "radius_m": 9.0,
+        "k": 3,
+        "categories": ["float_rock", "granite"],
+        "sample": True,
+        "return_home": True,
+        "max_duration_s": 900,
+        "mode": "act",
+    }
     monkeypatch.setattr(nlu, "_parse_grok", lambda text: (dict(fields), ["k defaulted"]))
     m, source = nlu.parse_mission_ex("whatever", "r_1", DEFAULTS)
     assert source == "grok"
@@ -92,9 +106,17 @@ def test_invalid_grok_output_falls_back_to_regex(monkeypatch):
 
 @pytest.mark.parametrize(
     "text, cmd",
-    [("Stop!", "stop"), ("pause", "pause"), ("ok continue", None), ("continue", "resume"),
-     ("come back", "come_back"), ("skip this one", "skip"), ("status", "status"), (SPEC, None)],
-)  # fmt: skip
+    [
+        ("Stop!", "stop"),
+        ("pause", "pause"),
+        ("ok continue", None),
+        ("continue", "resume"),
+        ("come back", "come_back"),
+        ("skip this one", "skip"),
+        ("status", "status"),
+        (SPEC, None),
+    ],
+)
 def test_parse_quick(text, cmd):
     assert nlu.parse_quick(text) == cmd
 

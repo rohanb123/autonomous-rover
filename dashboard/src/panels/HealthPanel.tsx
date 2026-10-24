@@ -11,7 +11,7 @@ export default function HealthPanel({ telemetry, roverStatus, poses }:
     <section className="panel health">
       <span>state <b>{roverStatus?.state ?? t?.state ?? '—'}</b></span>
       <span>pose {p ? `(${p.x.toFixed(2)}, ${p.y.toFixed(2)}) ${fmtDeg(p.headingDeg)} [${p.source}]` : '—'}</span>
-      <span>battery {t ? `${fmtNum(t.batteryV)} V` : '—'}</span>
+      <span>battery {t && t.batteryV >= 0 ? `${fmtNum(t.batteryV)} V` : '—'}</span>
       <span>cpu {t ? `${t.cpuTempC.toFixed(0)} °C` : '—'}</span>
       <span>link {roverStatus ? (roverStatus.linkOk ? 'ok' : 'down') : '—'}</span>
       <span>uplink backlog {t?.uplinkBacklog ?? '—'}</span>
