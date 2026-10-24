@@ -2,7 +2,7 @@
 
 POST /ingest/station  multipart (00 §6.4) -> store, upsert_keyframe ×N, upsert_local_tile, log_event
 POST /ingest/sample   multipart (00 §6.5) -> store present.jpg -> {ok, url}
-POST /fuse/{run_id}   global map; not built yet (phase E) -> 501
+POST /fuse/{run_id}   dead-reckoned mosaic -> upsert_global_tile ×N, set_run_fused -> {ok, tiles}
 GET  /files/{path}    files under the data root
 
 Replies stay fast (< 1 s): thumbnails and the local tile are made synchronously but small, and
@@ -44,7 +44,8 @@ from marsrover_shared.schemas import (
     StationUrls,
 )
 
-from .store import RunStore, StoreError, check_name
+from .fuse import DEFAULT_RES_M_PX, FuseError, fuse_run
+from .store import RunStore, StoreError, check_id, check_name
 from .tiles import bev_tile, thumb_b64
 
 log = logging.getLogger("mapper")
@@ -147,8 +148,7 @@ def create_app(store: RunStore | None = None, writer: Writer | None = None) -> F
                     thumb = thumb_b64(files[kf.file])
                 except (UnidentifiedImageError, OSError):
                     warnings.append(f"keyframe {kf.file} is not a readable image")
-            # UNVERIFIED (docs/requests/2026-10-24-P3-to-P4.md item 2): kf.heading_deg is taken as
-            # the absolute mission-frame heading at capture, as fake_brain writes it.
+            # kf.heading_deg is the absolute mission-frame heading at capture (docs/00 §6.4).
             db(
                 "upsert_keyframe",
                 kf.kf_id,
@@ -246,8 +246,46 @@ def create_app(store: RunStore | None = None, writer: Writer | None = None) -> F
         return SampleReply(ok=True, url=store.url_for(rel))
 
     @app.post("/fuse/{run_id}")
-    def fuse(run_id: str) -> dict:
-        raise HTTPException(501, "global map fusion is not built yet (P3 phase E)")
+    async def fuse(run_id: str) -> dict:
+        try:
+            check_id(run_id, "run_id")
+            result = await run_in_threadpool(fuse_run, run_id, DEFAULT_RES_M_PX, store)
+        except StoreError as e:
+            raise HTTPException(422, str(e)) from e
+        except FuseError as e:
+            raise HTTPException(404, str(e)) from e
+        for t in result["tiles"]:
+            db(
+                "upsert_global_tile",
+                f"g_{run_id}_{t['ix']}_{t['iy']}",
+                run_id,
+                t["ix"],
+                t["iy"],
+                t["origin_x"],
+                t["origin_y"],
+                result["res_m_px"],
+                t["w_px"],
+                t["h_px"],
+                t["png_b64"],
+                result["version"],
+            )
+        db("set_run_fused", run_id, True)
+        event(
+            run_id,
+            "warn" if result["warnings"] else "info",
+            "fused",
+            f"fused {len(result['stations'])} stations into {len(result['tiles'])} global tiles "
+            f"(method dr, v{result['version']})",
+            {
+                "method": "dr",
+                "version": result["version"],
+                "stations": result["stations"],
+                "bounds": result["bounds"],
+                "mosaic": store.url_for(result["mosaic"]),
+                "warnings": result["warnings"],
+            },
+        )
+        return {"ok": True, "tiles": len(result["tiles"])}
 
     @app.get("/files/{path:path}")
     def get_file(path: str) -> FileResponse:

@@ -214,11 +214,6 @@ def test_files_serves_uploads_and_blocks_traversal(env):
     assert client.get("/files/runs/nope.png").status_code == 404
 
 
-def test_fuse_is_not_built_yet(env):
-    client, _, _ = env
-    assert client.post(f"/fuse/{RUN}").status_code == 501
-
-
 def test_module_app_exists_without_stdb_token(monkeypatch):
     from .. import app as app_module
 
