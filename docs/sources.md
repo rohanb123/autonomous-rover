@@ -28,7 +28,6 @@ Everything in this spec that is a fact (not a design choice) comes from one of t
 | SuperCam PDS bundle readme | https://pds-geosciences.wustl.edu/m2020/urn-nasa-pds-mars2020_supercam/readme.txt |
 | Curiosity raw images JSON (unofficial, terms ⚠️) | https://mars.nasa.gov/api/v1/raw_image_items/?order=sol%20desc&per_page=N&page=0&condition_1=msl:mission |
 | Perseverance raw images JSON (unofficial, terms ⚠️) | https://mars.nasa.gov/rss/api/?feed=raw_images&category=mars2020&feedtype=json&num=N&page=0&order=sol+desc |
-| JPL Horizons API (OWLT, `QUANTITIES='20,21'`) | https://ssd.jpl.nasa.gov/api/horizons.api |
 | AEGIS on Perseverance (JPL) | https://doi.org/10.48577/jpl.nymwbh |
 
 ## Bradford assay (simulated; real parameters only)

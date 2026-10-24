@@ -28,7 +28,6 @@
 | JPL raw images (Curiosity) | `https://mars.nasa.gov/api/v1/raw_image_items/?order=sol%20desc&per_page=N&page=0&condition_1=msl:mission` | per-call | ⚠️ terms UNVERIFIED (unofficial JSON) | latest raw images | Dashboard "real Mars" backdrop / demo images; few extra eval images |
 | JPL raw images (Perseverance) | `https://mars.nasa.gov/rss/api/?feed=raw_images&category=mars2020&feedtype=json&num=N&page=0&order=sol+desc` | per-call | ⚠️ same | | same |
 | ~~api.nasa.gov Mars Rover Photos~~ | `api.nasa.gov/mars-photos/...` | — | — | **Returned 404 on 2026-10-23: treat as dead** | don't build on it |
-| **JPL Horizons** | `https://ssd.jpl.nasa.gov/api/horizons.api?format=json&COMMAND='499'&OBJ_DATA='NO'&MAKE_EPHEM='YES'&EPHEM_TYPE='OBSERVER'&CENTER='500@399'&START_TIME=…&STOP_TIME=…&STEP_SIZE='1 d'&QUANTITIES='20,21'` | tiny | public | Earth–Mars range + 1-way light time | Mars delay (P4 `horizons.py`) |
 
 ### MSL v2.1 class map (verified from the zip)
 `0 Arm cover · 1 Other rover part · 2 Artifact · 3 Nearby surface · 4 Close-up rock · 5 DRT · 6 DRT spot · 7 Distant landscape · 8 Drill hole · 9 Night sky · 10 Float · 11 Layers · 12 Light-toned veins · 13 Mastcam cal target · 14 Sand · 15 Sun · 16 Wheel · 17 Wheel joint · 18 Wheel tracks`

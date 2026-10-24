@@ -28,8 +28,7 @@ const mission = table(
     text: t.string(),
     paramsJson: t.string(),
     assumptionsJson: t.string(),
-    status: t.string(), // parsed | delayed | active | done | rejected
-    deliverAtUnix: t.f64(),
+    status: t.string(), // parsed | active | done | rejected
   }
 );
 
@@ -205,19 +204,6 @@ const roverStatus = table(
   }
 );
 
-const delayConfig = table(
-  { name: 'delay_config', public: true },
-  {
-    key: t.string().primaryKey(), // always "delay"
-    mode: t.string(), // earth | mars
-    compression: t.f64(),
-    owltS: t.f64(),
-    effectiveDelayS: t.f64(),
-    horizonsEpochUnix: t.f64(),
-    source: t.string(), // horizons | cache | manual
-  }
-);
-
 const event = table(
   { name: 'event', public: true },
   {
@@ -255,7 +241,6 @@ const spacetimedb = schema({
   analysisRecord,
   telemetry,
   roverStatus,
-  delayConfig,
   event,
   writer,
 });

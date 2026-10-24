@@ -42,7 +42,6 @@ import InsertPoseReducer from "./insert_pose_reducer";
 import InsertTelemetryReducer from "./insert_telemetry_reducer";
 import LogEventReducer from "./log_event_reducer";
 import MarkVisitedReducer from "./mark_visited_reducer";
-import SetDelayConfigReducer from "./set_delay_config_reducer";
 import SetRunFusedReducer from "./set_run_fused_reducer";
 import StartRunReducer from "./start_run_reducer";
 import UpsertCandidateReducer from "./upsert_candidate_reducer";
@@ -58,7 +57,6 @@ import UpsertTaskReducer from "./upsert_task_reducer";
 // Import all table schema definitions
 import AnalysisRecordRow from "./analysis_record_table";
 import CandidateRow from "./candidate_table";
-import DelayConfigRow from "./delay_config_table";
 import EventRow from "./event_table";
 import GlobalTileRow from "./global_tile_table";
 import KeyframeRow from "./keyframe_table";
@@ -107,17 +105,6 @@ const tablesSchema = __schema({
       { name: 'candidate_cand_id_key', constraint: 'unique', columns: ['candId'] },
     ],
   }, CandidateRow),
-  delayConfig: __table({
-    name: 'delay_config',
-    indexes: [
-      { accessor: 'key', name: 'delay_config_key_idx_btree', algorithm: 'btree', columns: [
-        'key',
-      ] },
-    ],
-    constraints: [
-      { name: 'delay_config_key_key', constraint: 'unique', columns: ['key'] },
-    ],
-  }, DelayConfigRow),
   event: __table({
     name: 'event',
     indexes: [
@@ -278,7 +265,6 @@ const reducersSchema = __reducers(
   __reducerSchema("insert_telemetry", InsertTelemetryReducer),
   __reducerSchema("log_event", LogEventReducer),
   __reducerSchema("mark_visited", MarkVisitedReducer),
-  __reducerSchema("set_delay_config", SetDelayConfigReducer),
   __reducerSchema("set_run_fused", SetRunFusedReducer),
   __reducerSchema("start_run", StartRunReducer),
   __reducerSchema("upsert_candidate", UpsertCandidateReducer),

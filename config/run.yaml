@@ -1,4 +1,4 @@
-# Mirror of docs/00-overview-and-contracts.md §4, §6.1, §8, §9. Doc 00 wins; a test compares them.
+# Mirror of docs/00-overview-and-contracts.md §4, §6.1, §8. Doc 00 wins; a test compares them.
 
 mission_defaults:          # from the §6.1 example
   radius_m: 1.5
@@ -50,12 +50,6 @@ timeouts_s:
   scoop: 30
   clock_sync_tolerance: 0.05
 
-mars_delay:
-  horizons: {command: "499", center: "500@399", quantities: "20,21"}
-  cache_path: data/horizons_cache.json
-  compression_range: [1, 1000]
-  compression_default: 74.7  # ≈ 10 s effective delay
-  never_delayed: [estop, stop]
 
 voice:                     # P4 (gx10/brain/voice/)
   asr_faster_whisper_size: small   # small/base, en; CPU int8 fallback

@@ -15,7 +15,7 @@ Everything here is **⚠️ UNVERIFIED** until its status says resolved. "Defaul
 | U-6 | Chassis deck height / shoulder height | Scoop geometry (lip reach ≈ 12.0 cm in the worked example) | Worked example in 01 §6 | Measure | P1 | by I0 |
 | U-7 | Webcam minimum focus distance | PRESENT pose must be in focus | ≈ 15–20 cm assumed | Photograph a ruler at 10/15/20/30 cm | P1 + P2 | by I1 |
 | U-8 | Kit battery holder (cells, voltage) | Motor/servo supply split | Buy 2 × 4×AA holders (#830) | Inspect | P1 | by I0 |
-| U-9 | Venue network (can we bring a router? is there internet?) | Everything is on one LAN; datasets/Horizons need internet once | Own travel router, no internet at runtime; pre-download | Ask organizers | P4 | before the event |
+| U-9 | Venue network (can we bring a router? is there internet?) | Everything is on one LAN; datasets and model weights need internet once | Own travel router, no internet at runtime; pre-download | Ask organizers | P4 | before the event |
 | U-10 | SATS-JSON encoding of byte arrays over HTTP | Would let us store tiles as bytes | **Avoided**: base64 strings | Not needed | P4 | closed (design) |
 | U-11 | ✅ **Resolved 2026-10-24** (local v2.13.0, `test_live_insert_pose_round_trip`): positional arrays map in declaration order. HTTP reducer call: positional JSON array matches arg order as declared | `StdbClient.call` depends on it | Positional array in declaration order | I0 test (02 §12.2) | P4 | **I0** |
 | U-12 | ✅ **Resolved 2026-10-24** (local v2.13.0): yes, `ctx.sender.toHexString()` works; `claim_writer`/`add_writer` use it. Does server-side `Identity` have `toHexString()` in the TS module? | `writer` table key | Fallback: compare with `isEqual` over a stored identity column | Compile a 3-line reducer | P4 | by I1 |
@@ -49,4 +49,4 @@ L = likelihood, I = impact (1–3). Score = L×I.
 | R11 | Dashboard bandwidth from base64 tiles/keyframes | 1 | 2 | 2 | Size caps in reducers; per-run subscriptions; `keyframe_meta` view (stretch) | UI lag > 1 s → drop thumbs from live | P4 |
 | R12 | Contract drift between teams | 2 | 3 | 6 | `shared/py` pydantic for every message; change process in AGENTS.md; role-file copies | Any mismatch at a gate → fix the code to 00, not 00 to the code | P4 |
 | R13 | Clock skew → replay ordering wrong | 1 | 2 | 2 | chrony/timesyncd to the GX10 (U-16) | Skew > 50 ms → resync | P4 |
-| R14 | E-STOP doesn't stop in time | 1 | 3 | 3 | Bypasses DelayQueue and FSM; Pi latch calls `Motors.stop()` directly; physical kill switch | Test at every gate | P4, P2, P1 |
+| R14 | E-STOP doesn't stop in time | 1 | 3 | 3 | Bypasses the FSM queue; Pi latch calls `Motors.stop()` directly; physical kill switch | Test at every gate | P4, P2, P1 |

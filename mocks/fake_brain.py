@@ -4,7 +4,7 @@ Stands in for the whole backend (brain + Pi + vision + mapper) so the dashboard 
 built without hardware (docs/04 §1, P4 role doc §8). One fake arena drives every image,
 so local tiles, keyframes, pins and the fused global map all line up.
 
-    python mocks/fake_brain.py              # real time (~3 min)
+    python mocks/fake_brain.py              # real time (~2.5 min)
     python mocks/fake_brain.py --speed 20   # same rows, 20x faster
 
 Needs config/.env (STDB_URL, STDB_DB, STDB_TOKEN_BRAIN) and a published module
@@ -40,7 +40,6 @@ from marsrover_shared.stdb_http import StdbClient  # noqa: E402
 RADIUS_M, K = 1.5, 3
 W_NOV, W_VIS, W_PICK, W_CAT, W_DIST = 0.35, 0.25, 0.15, 0.15, 0.10
 VISIT_RADIUS_M = 0.20
-OWLT_S, COMPRESSION = 746.6, 74.7  # doc 00 §9: 12.444 min, default compression -> ~10 s
 
 # Fake arena, rendered once in the mission frame. Same image convention as BEV tiles:
 # image up = +x, image left = +y, 0.005 m/px.
@@ -322,10 +321,7 @@ class FakeRun:
 
     # --- phases --------------------------------------------------------------------------
     def uplink(self) -> None:
-        now = time.time()
-        self.call("start_run", self.run_id, "fake_brain scripted run", now)
-        delay_s = OWLT_S / COMPRESSION
-        self.call("set_delay_config", "mars", COMPRESSION, OWLT_S, delay_s, now, "cache")
+        self.call("start_run", self.run_id, "fake_brain scripted run", time.time())
         self.tick()
         self.mission_id = self.ids.next("m")
         text = (
@@ -344,22 +340,15 @@ class FakeRun:
             "max_duration_s": 900,
             "mode": "act",
         }
-        deliver = time.time() + delay_s / self.speed
         self.mission = (text, json.dumps(params))
-        for status in ("parsed", "delayed"):
-            self.mission_status(status, deliver)
-        self.event(
-            "mission", f"Mission {self.mission_id} uplinked; arrives in {delay_s:.1f} s (Mars mode)"
-        )
-        self.tick(round(delay_s / TICK_S))
-        self.mission_status("active", deliver)
+        self.mission_status("parsed")
+        self.event("mission", f"Mission {self.mission_id} parsed: radius {RADIUS_M} m, k={K}")
+        self.tick(2)
+        self.mission_status("active")
 
-    def mission_status(self, status: str, deliver_at: float) -> None:
-        self.deliver_at = deliver_at
+    def mission_status(self, status: str) -> None:
         text, params = self.mission
-        self.call(
-            "upsert_mission", self.mission_id, self.run_id, text, params, "[]", status, deliver_at
-        )
+        self.call("upsert_mission", self.mission_id, self.run_id, text, params, "[]", status)
 
     def plan_tasks(self, stations: list[tuple[float, float]]) -> list[str]:
         out = []
@@ -619,7 +608,7 @@ class FakeRun:
         self.state, self.fsm = "IDLE", "DONE"
         self.tick()
         self.call("end_run", self.run_id, "done", time.time())
-        self.mission_status("done", self.deliver_at)
+        self.mission_status("done")
         self.event("fsm", "RETURN -> DONE: home reached, run ended")
         self.fuse()
 
