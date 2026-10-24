@@ -9,7 +9,10 @@
 # written into doc 01 fails the build.
 # Timing mirrors docs/00-overview-and-contracts.md section 4. Doc 00 wins.
 
-contract_version: "1.3.0"   # docs/00 section 0. A bump should fail loudly here, not drift silently.
+contract_version: "1.4.0"   # docs/00 section 0. A bump should fail loudly here, not drift
+                            # silently. 1.4.0 is run-scoped DB keys (P4): it changes
+                            # spacetimedb/ and docs/02 only, not schemas.py, so nothing
+                            # on the rover's wire or uploads moved.
 calibrated_at: null         # ISO-8601 of the last calibrate_*.py run. null = nothing is measured.
 
 pins:                       # BCM numbering, docs/01 section 4
@@ -57,17 +60,26 @@ bev:
     - [0.0, 0.0, 1.0]
 
 camera:
-  index: 0
+  # The nav camera is a Camera Module 3 on the CSI ribbon, driven by picamera2.
+  # cv2.VideoCapture cannot open a CSI camera on a Pi 5 (no bcm2835-v4l2 shim there), so
+  # `index`, `fourcc` and `exposure` below apply only to the USB path: the GX10's overhead
+  # camera and laptop work. See rover/rover/camera.py.
+  index: 0                  # USB path only
   width: 640
   height: 480
   fps: 30
-  fourcc: MJPG              # UNVERIFIED: much faster than YUYV over USB at 640x480
-  flush_frames: 3           # P2 role doc section 9: USB webcams buffer stale frames
+  fourcc: MJPG              # USB path only: faster than YUYV at 640x480
+  flush_frames: 3           # discard the frames already in flight; a turn invalidates them
   settle_s: 0.3             # docs/05 U-21 fallback when the exposure lock does not take
   jpeg_quality: 85
-  lock_exposure: true       # UNVERIFIED U-21: CAP_PROP_AUTO_EXPOSURE = 0.25 is V4L2 "manual"
-  exposure: 80.0            # UNVERIFIED: driver units; only used when the lock takes
+  lock_exposure: true       # a locked exposure is what lets the BEV mosaic stitch
   lock_white_balance: true
+  exposure: 80.0            # UNVERIFIED, USB path: V4L2 driver units
+  # --- CSI path (Camera Module 3) ---
+  exposure_us: 8000         # UNVERIFIED: libcamera ExposureTime, in microseconds
+  analogue_gain: 2.0        # UNVERIFIED: needed once AeEnable is false, or frames are dark
+  focus_m: 0.8              # survey focus: ground 0.3-1.5 m out. CM3 has autofocus
+  present_focus_m: 0.15     # PRESENT close-up; CM3 focuses to ~0.1 m (docs/05 U-7)
 
 servos:
   freq_hz: 50

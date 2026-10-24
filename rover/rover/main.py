@@ -137,18 +137,20 @@ def make_imu(mode: str, calib: Calib) -> None:
 
 
 def make_camera(mode: str, calib: Calib) -> Camera:
+    """`auto` prefers the CSI Camera Module 3, then a USB camera, then none."""
     if mode == "off":
         return Camera(calib.camera, NullSource())
     if mode == "sim":
         return Camera(calib.camera, SyntheticSource(calib.camera.width, calib.camera.height))
     camera = Camera(calib.camera)
     try:
-        camera.open()
+        camera.open(backend=mode)
     except CameraError as e:
-        if mode == "opencv":
+        if mode in ("picamera2", "opencv"):
             raise
         log.warning("camera: none usable (%s); continuing without one", e)
         return Camera(calib.camera, NullSource())
+    log.info("camera: %s", camera.status())
     return camera
 
 
@@ -384,8 +386,9 @@ class HardwareBackend:
             "motors": self.motors.present,
             "servos": self.servos.present,
             "imu": self.imu is not None,
-            "camera": self.camera.present,
+            "camera": self.camera.backend if self.camera.present else False,
             "exposure_locked": self.camera.exposure_locked,
+            "focus_locked": self.camera.focus_locked,
             "calibrated": self.calib.calibrated,
         }
 
@@ -448,8 +451,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     p.add_argument(
         "--camera",
-        choices=("auto", "opencv", "sim", "off"),
+        choices=("auto", "picamera2", "opencv", "sim", "off"),
         default=env("ROVER_CAMERA", "auto"),
+        help="picamera2 = the CSI Camera Module 3; opencv = a USB camera",
     )
     p.add_argument("--no-hw", action="store_true", help="shorthand for every device off")
     p.add_argument("--log-level", default=env("ROVER_LOG_LEVEL", "INFO"))

@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import MISSING, dataclass, field
 from functools import cache
 from pathlib import Path
 from types import MappingProxyType
@@ -70,13 +70,18 @@ class CameraCfg:
     width: int
     height: int
     fps: int
-    fourcc: str
+    fourcc: str  # USB path only; the CSI path ignores it
     flush_frames: int
     settle_s: float
     jpeg_quality: int
     lock_exposure: bool
-    exposure: float
+    exposure: float  # USB/V4L2 driver units
     lock_white_balance: bool
+    # --- CSI (Camera Module 3) path. Defaulted, so an older calib.yaml still loads.
+    exposure_us: int = 8000  # libcamera ExposureTime is microseconds, not driver units
+    analogue_gain: float = 2.0  # with AeEnable off, gain has to be set explicitly
+    focus_m: float = 0.8  # survey: ground 0.3-1.5 m out
+    present_focus_m: float = 0.15  # the pebble in the scoop (docs/05 U-7)
 
 
 @dataclass(frozen=True)
@@ -158,8 +163,15 @@ def _build(cls: type, section: dict[str, Any], name: str, **coerced: Any):
     `coerced` wins over the raw YAML for the same key, so a caller that pre-parsed a value
     (a tuple out of a list, say) doesn't pass it twice.
     """
-    fields = {f for f in cls.__dataclass_fields__}
-    missing = fields - set(section) - set(coerced)
+    fields = set(cls.__dataclass_fields__)
+    # Only fields without a default are mandatory, so adding a defaulted one (a new CSI
+    # camera control, say) doesn't break a calib.yaml written before it existed.
+    required = {
+        f
+        for f, spec in cls.__dataclass_fields__.items()
+        if spec.default is MISSING and spec.default_factory is MISSING
+    }
+    missing = required - set(section) - set(coerced)
     if missing:
         raise CalibError(f"calib.yaml: {name} is missing {sorted(missing)}")
     raw = {k: v for k, v in section.items() if k in fields and k not in coerced}

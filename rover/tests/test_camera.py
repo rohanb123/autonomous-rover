@@ -1,9 +1,18 @@
-"""Tests for rover/rover/camera.py.
+"""Tests for rover/rover/camera.py -- the CSI (Camera Module 3) and USB paths.
 
-The two assertions that earn their keep are the stale-frame flush and the exposure-lock
-verification. Both are P2 role doc section 9 watch-outs, and both are the kind of thing that
-silently produces wrong *data* rather than an error: keyframes attributed to the heading
-before the turn, or a BEV mosaic that will not stitch because the exposure drifted.
+`Picamera2Source` takes its `Picamera2` object by injection, so the whole CSI control dance
+is testable on a laptop that has neither picamera2 nor a camera. `FakePicam2` below answers
+like the real thing: it reports which controls the sensor has, quantises ExposureTime the way
+a real sensor does, and hands back a BGR array.
+
+The assertions that earn their keep:
+  * **BGR, not RGB.** picamera2 names its formats in reverse of the numpy channel order, so
+    `"RGB888"` must be what we ask for. Getting it wrong swaps red and blue in every keyframe
+    and quietly changes every rock's measured contrast.
+  * **The exposure lock is verified, not assumed** -- from frame metadata, with a tolerance,
+    because a sensor quantises exposure to whole readout lines.
+  * **A fixed-focus sensor degrades honestly** instead of crashing on an AfMode it lacks.
+  * **The stale-frame flush**, which is what keeps a keyframe attached to the right heading.
 """
 
 from __future__ import annotations
@@ -19,39 +28,253 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import helpers  # noqa: E402
 
 from rover.camera import (  # noqa: E402
+    AF_MODES,
     AUTO_EXPOSURE_MANUAL,
+    CSI_FORMAT,
     Camera,
     CameraError,
     NullSource,
+    OpenCvSource,
+    Picamera2Source,
     SyntheticSource,
+    open_source,
 )
 from rover.config import parse_calib  # noqa: E402
 
 CFG = parse_calib(helpers.CALIB_DICT).camera
 
+#: Every control a Camera Module 3 has that we touch.
+CM3_CONTROLS = (
+    "AeEnable",
+    "ExposureTime",
+    "AnalogueGain",
+    "AwbEnable",
+    "AfMode",
+    "LensPosition",
+)
+#: A Camera Module 2 has no autofocus.
+CM2_CONTROLS = ("AeEnable", "ExposureTime", "AnalogueGain", "AwbEnable")
 
-class FakeSource:
-    """Counts reads and decides whether it honours a property set, like a real V4L2 driver."""
 
-    present = True
+class FakePicam2:
+    """Stands in for `picamera2.Picamera2`, answering like a real sensor."""
 
-    def __init__(self, *, honour_exposure: bool = True, fail_after: int | None = None) -> None:
-        self.reads = 0
-        self.sets: list[tuple[int, float]] = []
+    def __init__(
+        self,
+        controls: tuple[str, ...] = CM3_CONTROLS,
+        *,
+        exposure_quantum_us: int = 100,
+        honour_exposure: bool = True,
+        fail_capture: bool = False,
+    ) -> None:
+        self.camera_controls = dict.fromkeys(controls, (0, 0, 0))
+        self.applied: dict[str, Any] = {}
+        self.configured: dict[str, Any] | None = None
+        self.started = False
+        self.stopped = False
+        self.closed = False
+        self.af_cycles = 0
+        self._quantum = exposure_quantum_us
+        self._honour = honour_exposure
+        self._fail = fail_capture
+
+    # --- configuration ---
+    def create_video_configuration(self, main: dict[str, Any]) -> dict[str, Any]:
+        return {"main": dict(main), "kind": "video"}
+
+    def create_still_configuration(self, main: dict[str, Any]) -> dict[str, Any]:
+        return {"main": dict(main), "kind": "still"}
+
+    def configure(self, config: dict[str, Any]) -> None:
+        self.configured = config
+
+    def start(self) -> None:
+        self.started = True
+
+    def stop(self) -> None:
+        self.stopped = True
+
+    def close(self) -> None:
+        self.closed = True
+
+    # --- capture ---
+    def capture_array(self, stream: str = "main") -> Any:
+        if self._fail:
+            raise RuntimeError("sensor timeout")
+        import numpy as np
+
+        assert self.configured is not None
+        w, h = self.configured["main"]["size"]
+        frame = np.zeros((h, w, 3), dtype=np.uint8)
+        frame[:, :, 0] = 200  # channel 0 bright: BGR means this is BLUE
+        return frame
+
+    def capture_metadata(self) -> dict[str, Any]:
+        asked = self.applied.get("ExposureTime")
+        if asked is None:
+            return {"ExposureTime": 33000}
+        if not self._honour:
+            return {"ExposureTime": 33000}  # the sensor ignored us and stayed on auto
+        # Real sensors round to whole readout lines.
+        return {"ExposureTime": (int(asked) // self._quantum) * self._quantum}
+
+    # --- controls ---
+    def set_controls(self, controls: dict[str, Any]) -> None:
+        unknown = set(controls) - set(self.camera_controls)
+        if unknown:
+            raise RuntimeError(f"unsupported controls {sorted(unknown)}")
+        self.applied.update(controls)
+
+    def autofocus_cycle(self) -> bool:
+        self.af_cycles += 1
+        return True
+
+
+def csi(**kwargs) -> tuple[Picamera2Source, FakePicam2]:
+    fake = FakePicam2(**kwargs)
+    return Picamera2Source(CFG, fake), fake
+
+
+# --- the CSI path: configuration ----------------------------------------------------------
+
+
+def test_the_csi_source_asks_for_a_video_configuration_in_bgr_order():
+    source, fake = csi()
+    assert fake.configured is not None
+    assert fake.configured["kind"] == "video", "a still config re-runs sensor setup per capture"
+    assert fake.configured["main"]["size"] == (CFG.width, CFG.height)
+    # picamera2's format names are the reverse of the numpy channel order, so "RGB888"
+    # is how you ask for a BGR array -- which is what OpenCV and the rest expect.
+    assert fake.configured["main"]["format"] == CSI_FORMAT == "RGB888"
+    assert fake.started is True
+    assert source.present is True and source.name == "picamera2"
+
+
+def test_the_csi_frame_is_bgr_not_rgb():
+    """Channel 0 is blue. If this flips, every rock's contrast changes and Mars goes blue."""
+    source, _ = csi()
+    ok, frame = source.read()
+    assert ok
+    assert frame.shape == (CFG.height, CFG.width, 3)
+    b, g, r = frame[0, 0]
+    assert (int(b), int(g), int(r)) == (200, 0, 0)
+
+
+def test_a_capture_failure_is_reported_not_raised():
+    source, _ = csi(fail_capture=True)
+    ok, frame = source.read()
+    assert ok is False and frame is None
+
+
+def test_missing_picamera2_says_how_to_install_it(monkeypatch):
+    monkeypatch.setitem(sys.modules, "picamera2", None)
+    with pytest.raises(CameraError, match="apt"):
+        Picamera2Source(CFG)
+
+
+def test_release_stops_and_closes():
+    source, fake = csi()
+    source.release()
+    assert fake.stopped is True and fake.closed is True
+
+
+# --- the CSI path: exposure lock (docs/05 U-21) -------------------------------------------
+
+
+def test_the_exposure_lock_sets_the_libcamera_controls():
+    source, fake = csi()
+    exposure_locked, wb_locked = source.lock_exposure(CFG)
+    assert exposure_locked is True and wb_locked is True
+    assert fake.applied["AeEnable"] is False
+    assert fake.applied["AwbEnable"] is False
+    assert fake.applied["ExposureTime"] == CFG.exposure_us
+    assert fake.applied["AnalogueGain"] == CFG.analogue_gain
+
+
+def test_sensor_quantisation_still_counts_as_locked():
+    """8000 us asked, 7900 reported: that is a readout-line boundary, not a failure."""
+    source, _ = csi(exposure_quantum_us=500)
+    exposure_locked, _ = source.lock_exposure(CFG)
+    assert exposure_locked is True
+
+
+def test_a_sensor_that_ignores_the_lock_is_detected():
+    source, _ = csi(honour_exposure=False)
+    exposure_locked, wb_locked = source.lock_exposure(CFG)
+    assert exposure_locked is False, "the metadata disagreed, so we must not claim a lock"
+    assert wb_locked is True  # AwbEnable was still accepted
+
+
+def test_the_lock_is_skipped_when_calib_says_so():
+    cfg = parse_calib(
+        helpers.calib_dict(camera={"lock_exposure": False, "lock_white_balance": False})
+    ).camera
+    fake = FakePicam2()
+    source = Picamera2Source(cfg, fake)
+    assert source.lock_exposure(cfg) == (False, False)
+    assert fake.applied == {}
+
+
+# --- the CSI path: focus (docs/05 U-7) ----------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "distance_m, dioptres",
+    [(0.15, 1 / 0.15), (0.8, 1.25), (2.0, 0.5), (0.0, 0.0), (-1.0, 0.0)],
+    ids=["present", "survey", "far", "infinity", "negative-is-infinity"],
+)
+def test_manual_focus_converts_metres_to_dioptres(distance_m: float, dioptres: float):
+    source, fake = csi()
+    assert source.focus(distance_m) is True
+    assert fake.applied["LensPosition"] == pytest.approx(dioptres)
+    assert fake.applied["AfMode"] == AF_MODES["Manual"], "continuous AF would hunt mid-survey"
+
+
+def test_focus_none_runs_one_autofocus_sweep():
+    source, fake = csi()
+    assert source.focus(None) is True
+    assert fake.applied["AfMode"] == AF_MODES["Auto"]
+    assert fake.af_cycles == 1
+
+
+def test_a_fixed_focus_sensor_degrades_honestly():
+    """A Camera Module 2 has no AfMode. Report False; never crash, never claim focus."""
+    source, fake = csi(controls=CM2_CONTROLS)
+    assert source.focus(0.15) is False
+    assert "LensPosition" not in fake.applied
+    # And the exposure lock still works on that sensor.
+    assert source.lock_exposure(CFG)[0] is True
+
+
+def test_unsupported_controls_are_dropped_rather_than_raising():
+    source, fake = csi(controls=("AeEnable",))
+    source.lock_exposure(CFG)
+    assert set(fake.applied) <= {"AeEnable"}
+
+
+# --- the USB path --------------------------------------------------------------------------
+
+
+class FakeCap:
+    """A `cv2.VideoCapture` stand-in that can accept a property write and ignore it."""
+
+    def __init__(self, *, honour: bool = True) -> None:
         self.props: dict[int, float] = {}
-        self.honour_exposure = honour_exposure
-        self.fail_after = fail_after
+        self.sets: list[tuple[int, float]] = []
+        self.honour = honour
         self.released = False
+        self.reads = 0
+
+    def isOpened(self) -> bool:  # noqa: N802 - cv2's name
+        return True
 
     def read(self) -> tuple[bool, Any]:
         self.reads += 1
-        if self.fail_after is not None and self.reads > self.fail_after:
-            return False, None
-        return True, [[self.reads]]  # a frame stamped with its own sequence number
+        return True, [[self.reads]]
 
     def set(self, prop: int, value: float) -> bool:
         self.sets.append((prop, value))
-        if not self.honour_exposure:
+        if not self.honour:
             return False
         self.props[prop] = value
         return True
@@ -63,82 +286,155 @@ class FakeSource:
         self.released = True
 
 
-# --- presence ------------------------------------------------------------------------------
+def test_the_usb_path_locks_exposure_by_reading_the_property_back():
+    cv2 = pytest.importorskip("cv2")
+    cap = FakeCap(honour=True)
+    source = OpenCvSource(0, CFG, cap)
+    assert source.lock_exposure(CFG) == (True, True)
+    assert (cv2.CAP_PROP_AUTO_EXPOSURE, AUTO_EXPOSURE_MANUAL) in cap.sets
+    assert (cv2.CAP_PROP_EXPOSURE, CFG.exposure) in cap.sets
+
+
+def test_a_usb_driver_that_ignores_the_write_is_detected():
+    pytest.importorskip("cv2")
+    source = OpenCvSource(0, CFG, FakeCap(honour=False))
+    assert source.lock_exposure(CFG) == (False, False)
+
+
+def test_the_usb_path_cannot_focus():
+    pytest.importorskip("cv2")
+    source = OpenCvSource(0, CFG, FakeCap())
+    assert source.focus(0.15) is False
+
+
+# --- backend selection ---------------------------------------------------------------------
+
+
+def test_open_source_honours_an_explicit_backend():
+    assert open_source(CFG, "off").name == "none"
+    assert open_source(CFG, "sim").name == "synthetic"
+    with pytest.raises(CameraError, match="unknown camera backend"):
+        open_source(CFG, "teleport")
+
+
+def test_auto_falls_back_from_csi_to_usb(monkeypatch):
+    """On a laptop there is no CSI module, so `auto` must try USB rather than give up."""
+    monkeypatch.setitem(sys.modules, "picamera2", None)
+    tried: list[str] = []
+
+    def fake_opencv(index, cfg, cap=None):
+        tried.append("opencv")
+        raise CameraError("no USB camera either")
+
+    monkeypatch.setattr("rover.camera.OpenCvSource", fake_opencv)
+    with pytest.raises(CameraError):
+        open_source(CFG, "auto")
+    assert tried == ["opencv"], "auto must fall through to USB after CSI fails"
+
+
+# --- Camera ---------------------------------------------------------------------------------
 
 
 def test_no_camera_means_present_false_and_a_loud_grab():
     camera = Camera(CFG, NullSource())
-    assert camera.present is False
-    with pytest.raises(CameraError, match="no camera"):
+    assert camera.present is False and camera.backend == "none"
+    with pytest.raises(CameraError, match="--camera picamera2"):
         camera.grab()
 
 
-def test_a_default_camera_has_no_source():
-    assert Camera(CFG).present is False
+def test_open_locks_exposure_and_focuses_for_the_survey():
+    fake = FakePicam2()
+    camera = Camera(CFG)
+    camera.open(backend="off")  # start from nothing...
+    camera._source = Picamera2Source(CFG, fake)  # ...then inject the CSI source
+    camera.lock_exposure()
+    camera.focus_for_survey()
+    assert camera.exposure_locked and camera.white_balance_locked and camera.focus_locked
+    assert fake.applied["LensPosition"] == pytest.approx(1 / CFG.focus_m)
+    assert camera.backend == "picamera2"
 
 
-# --- the stale-frame flush -----------------------------------------------------------------
+def test_focus_for_present_is_nearer_than_for_survey():
+    """The whole point of CM3 over a fixed-focus webcam: both distances can be sharp."""
+    camera = Camera(CFG, Picamera2Source(CFG, FakePicam2()))
+    camera.focus_for_survey()
+    survey = camera._source.applied["LensPosition"]  # type: ignore[attr-defined]
+    camera.focus_for_present()
+    present = camera._source.applied["LensPosition"]  # type: ignore[attr-defined]
+    assert present > survey, "nearer focus = more dioptres"
+    assert present == pytest.approx(1 / CFG.present_focus_m)
 
 
-def test_grab_flushes_the_stale_frames_first():
-    """P2 role doc section 9: USB webcams buffer, so the first read is from before the turn."""
-    source = FakeSource()
-    camera = Camera(CFG, source)
+def test_grab_flushes_the_frames_already_in_flight():
+    pytest.importorskip("cv2")
+    cap = FakeCap()
+    camera = Camera(CFG, OpenCvSource(0, CFG, cap))
+    camera.exposure_locked = True  # skip the settle so this stays fast
     frame = camera.grab()
-    assert source.reads == CFG.flush_frames + 1 == 4
+    assert cap.reads == CFG.flush_frames + 1 == 4
     assert frame == [[4]], "the returned frame must be the one after the flush"
 
 
-def test_the_flush_count_comes_from_calib():
-    cfg = parse_calib(helpers.calib_dict(camera={"flush_frames": 0})).camera
-    source = FakeSource()
-    Camera(cfg, source).grab()
-    assert source.reads == 1
+def test_grab_settles_only_when_the_exposure_is_not_locked(monkeypatch):
+    """docs/05 U-21's fallback: if we could not pin exposure, give AE time to converge."""
+    slept: list[float] = []
+    monkeypatch.setattr("rover.camera.time.sleep", slept.append)
+    camera = Camera(CFG, Picamera2Source(CFG, FakePicam2()))
+
+    camera.exposure_locked = False
+    camera.grab()
+    assert slept == [CFG.settle_s]
+
+    slept.clear()
+    camera.exposure_locked = True
+    camera.grab()
+    assert slept == [], "a locked exposure needs no settle"
 
 
 def test_a_failed_capture_raises_rather_than_returning_junk():
-    camera = Camera(CFG, FakeSource(fail_after=CFG.flush_frames))
+    camera = Camera(CFG, Picamera2Source(CFG, FakePicam2(fail_capture=True)))
+    camera.exposure_locked = True
     with pytest.raises(CameraError, match="capture failed"):
         camera.grab()
 
 
-# --- the exposure lock (docs/05 U-21) ------------------------------------------------------
+def test_jpeg_round_trips_a_csi_frame():
+    cv2 = pytest.importorskip("cv2")
+    import numpy as np
+
+    camera = Camera(CFG, Picamera2Source(CFG, FakePicam2()))
+    camera.exposure_locked = True
+    blob = camera.jpeg(camera.grab())
+    assert blob.startswith(b"\xff\xd8"), "JPEG SOI marker"
+    decoded = cv2.imdecode(np.frombuffer(blob, dtype=np.uint8), cv2.IMREAD_COLOR)
+    assert decoded is not None and decoded.shape == (CFG.height, CFG.width, 3)
+    # Still blue after the round trip: the channel order survived.
+    b, g, r = decoded[0, 0]
+    assert int(b) > 150 and int(g) < 80 and int(r) < 80
 
 
-def test_a_honoured_exposure_lock_is_recorded():
-    pytest.importorskip("cv2")
-    import cv2
-
-    source = FakeSource(honour_exposure=True)
-    camera = Camera(CFG, source)
-    camera.open()
-    assert camera.exposure_locked is True
-    assert (cv2.CAP_PROP_AUTO_EXPOSURE, AUTO_EXPOSURE_MANUAL) in source.sets
-    assert (cv2.CAP_PROP_EXPOSURE, CFG.exposure) in source.sets
-    assert camera.white_balance_locked is True
+def test_status_reports_what_was_actually_achieved():
+    camera = Camera(CFG, Picamera2Source(CFG, FakePicam2()))
+    camera.lock_exposure()
+    camera.focus_for_survey()
+    status = camera.status()
+    assert status["backend"] == "picamera2"
+    assert status["size"] == [CFG.width, CFG.height]
+    assert status["exposure_locked"] is True and status["focus_locked"] is True
 
 
-def test_a_refused_exposure_lock_is_detected_not_assumed():
-    """The driver can accept set() and ignore it, so open() reads the property back."""
-    pytest.importorskip("cv2")
-    camera = Camera(CFG, FakeSource(honour_exposure=False))
-    camera.open()
-    assert camera.exposure_locked is False
-    assert camera.white_balance_locked is False
+def test_close_releases_and_resets_every_flag():
+    fake = FakePicam2()
+    camera = Camera(CFG, Picamera2Source(CFG, fake))
+    camera.lock_exposure()
+    camera.focus_for_survey()
+    camera.close()
+    assert fake.stopped and fake.closed
+    assert camera.present is False and camera.backend == "none"
+    assert not camera.exposure_locked and not camera.focus_locked
 
 
-def test_the_lock_is_skipped_when_calib_says_so():
-    pytest.importorskip("cv2")
-    cfg = parse_calib(
-        helpers.calib_dict(camera={"lock_exposure": False, "lock_white_balance": False})
-    ).camera
-    source = FakeSource()
-    camera = Camera(cfg, source)
-    camera.open()
-    assert source.sets == [] and camera.exposure_locked is False
-
-
-# --- encoding ------------------------------------------------------------------------------
+# --- the synthetic and null sources --------------------------------------------------------
 
 
 def test_the_synthetic_source_is_deterministic_and_the_right_shape():
@@ -152,20 +448,15 @@ def test_the_synthetic_source_is_deterministic_and_the_right_shape():
     assert (SyntheticSource(160, 120, seed=4).read()[1] != frame_a).any()
 
 
-def test_jpeg_round_trips_a_real_frame():
-    cv2 = pytest.importorskip("cv2")
-    camera = Camera(CFG, SyntheticSource(160, 120))
-    blob = camera.jpeg(camera.grab())
-    assert blob.startswith(b"\xff\xd8"), "JPEG SOI marker"
-    import numpy as np
-
-    decoded = cv2.imdecode(np.frombuffer(blob, dtype=np.uint8), cv2.IMREAD_COLOR)
-    assert decoded is not None and decoded.shape == (120, 160, 3)
+def test_the_synthetic_source_claims_a_locked_exposure():
+    """Not a fiction: a generated frame is fixed-exposure by construction."""
+    assert SyntheticSource(64, 48).lock_exposure(CFG) == (True, True)
+    assert SyntheticSource(64, 48).focus(0.2) is False
 
 
-def test_close_releases_the_source_and_goes_absent():
-    source = FakeSource()
-    camera = Camera(CFG, source)
-    camera.close()
-    assert source.released is True
-    assert camera.present is False
+def test_the_null_source_never_pretends():
+    null = NullSource()
+    assert null.read() == (False, None)
+    assert null.lock_exposure(CFG) == (False, False)
+    assert null.focus(0.2) is False
+    assert null.metadata() == {}

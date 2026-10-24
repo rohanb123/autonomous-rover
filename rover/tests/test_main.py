@@ -58,8 +58,9 @@ def test_everything_off_builds_on_a_laptop():
             "motors": False,
             "servos": False,
             "imu": False,
-            "camera": False,
+            "camera": False,  # the backend name once one is live, e.g. "picamera2"
             "exposure_locked": False,
+            "focus_locked": False,
             "calibrated": False,
         }
     finally:

@@ -155,6 +155,10 @@ CALIB_DICT: dict[str, Any] = {
         "lock_exposure": True,
         "exposure": 80.0,
         "lock_white_balance": True,
+        "exposure_us": 8000,
+        "analogue_gain": 2.0,
+        "focus_m": 0.8,
+        "present_focus_m": 0.15,
     },
     "servos": {
         "freq_hz": 50,
