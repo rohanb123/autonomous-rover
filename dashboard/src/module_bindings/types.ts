@@ -53,17 +53,6 @@ export const Candidate = __t.object("Candidate", {
 });
 export type Candidate = __Infer<typeof Candidate>;
 
-export const DelayConfig = __t.object("DelayConfig", {
-  key: __t.string(),
-  mode: __t.string(),
-  compression: __t.f64(),
-  owltS: __t.f64(),
-  effectiveDelayS: __t.f64(),
-  horizonsEpochUnix: __t.f64(),
-  source: __t.string(),
-});
-export type DelayConfig = __Infer<typeof DelayConfig>;
-
 export const Event = __t.object("Event", {
   id: __t.u64(),
   runId: __t.string(),
@@ -126,7 +115,6 @@ export const Mission = __t.object("Mission", {
   paramsJson: __t.string(),
   assumptionsJson: __t.string(),
   status: __t.string(),
-  deliverAtUnix: __t.f64(),
 });
 export type Mission = __Infer<typeof Mission>;
 

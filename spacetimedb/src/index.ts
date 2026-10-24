@@ -84,11 +84,11 @@ export const set_run_fused = spacetimedb.reducer(
 export const upsert_mission = spacetimedb.reducer(
   {
     missionId: t.string(), runId: t.string(), text: t.string(), paramsJson: t.string(),
-    assumptionsJson: t.string(), status: t.string(), deliverAtUnix: t.f64(),
+    assumptionsJson: t.string(), status: t.string(),
   },
   (ctx, a) => {
     requireWriter(ctx);
-    oneOf('status', a.status, ['parsed', 'delayed', 'active', 'done', 'rejected']);
+    oneOf('status', a.status, ['parsed', 'active', 'done', 'rejected']);
     if (ctx.db.mission.missionId.find(a.missionId)) ctx.db.mission.missionId.update(a);
     else ctx.db.mission.insert(a);
   }
@@ -246,23 +246,7 @@ export const add_analysis = spacetimedb.reducer(
   }
 );
 
-// --- delay and events ---------------------------------------------------------------------
-
-export const set_delay_config = spacetimedb.reducer(
-  {
-    mode: t.string(), compression: t.f64(), owltS: t.f64(), effectiveDelayS: t.f64(),
-    horizonsEpochUnix: t.f64(), source: t.string(),
-  },
-  (ctx, a) => {
-    requireWriter(ctx);
-    oneOf('mode', a.mode, ['earth', 'mars']);
-    oneOf('source', a.source, ['horizons', 'cache', 'manual']);
-    if (a.compression < 1 || a.compression > 1000) throw new SenderError('compression must be in [1, 1000]');
-    const row = { key: 'delay', ...a };
-    if (ctx.db.delayConfig.key.find('delay')) ctx.db.delayConfig.key.update(row);
-    else ctx.db.delayConfig.insert(row);
-  }
-);
+// --- events ---------------------------------------------------------------------------------
 
 export const log_event = spacetimedb.reducer(
   {

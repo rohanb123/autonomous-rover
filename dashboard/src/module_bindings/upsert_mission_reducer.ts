@@ -17,5 +17,4 @@ export default {
   paramsJson: __t.string(),
   assumptionsJson: __t.string(),
   status: __t.string(),
-  deliverAtUnix: __t.f64(),
 };

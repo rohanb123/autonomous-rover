@@ -8,7 +8,7 @@ Sources (verified 2026-10-23): docs https://spacetimedb.com/docs (full text snap
 - **System of record**: every run, pose, tile, candidate, visit and analysis (incl. simulated assay) is a row. Replay = reading old rows; no separate replay store.
 - **Live UI for free**: the dashboard subscribes and gets inserts/updates pushed over WebSocket. No polling, no custom WS fan-out.
 - **Writers are Python** (brain, mapper). The docs list client SDKs for C#, Rust, TypeScript and Unreal, **no Python SDK**, so Python calls reducers over the documented HTTP endpoint `POST /v1/database/:name/call/:reducer` (body = JSON array of args, `Authorization: Bearer <token>`). The docs note HTTP is not as optimized as WebSocket, so we **rate-limit**: pose ≤ 2 Hz, status ≤ 2 Hz, telemetry 1 Hz.
-- **Dashboard is read-only on STDB.** Commands go to the brain (it owns the delay + safety). The dashboard never calls reducers.
+- **Dashboard is read-only on STDB.** Commands go to the brain (it owns safety). The dashboard never calls reducers.
 
 ```mermaid
 flowchart LR
@@ -60,7 +60,7 @@ All tables `public: true` except `writer`. Every run-scoped table has a btree in
 | Table | PK | Key fields | Written by (reducer) | Read by (dashboard component, [06](06-dashboard.md)) |
 |---|---|---|---|---|
 | `run` | `runId` str | status `active\|done\|aborted`, startedUnix, endedUnix, notes, fused bool | brain `start_run`/`end_run`, mapper `set_run_fused` | RunPicker, TopBar |
-| `mission` | `missionId` str | runId, text, paramsJson, assumptionsJson, status `parsed\|delayed\|active\|done\|rejected`, deliverAtUnix | brain `upsert_mission` | MissionPanel |
+| `mission` | `missionId` str | runId, text, paramsJson, assumptionsJson, status `parsed\|active\|done\|rejected` | brain `upsert_mission` | MissionPanel |
 | `task_queue` | `taskId` str | runId, missionId, kind, ref, seq u32, status, note | brain `upsert_task` | TaskQueuePanel |
 | `pose` | `id` u64 autoInc | runId, tUnix, x, y, headingDeg, source, sigmaXy | brain `insert_pose` (2 Hz) | map trail layer, TimelineScrubber |
 | `keyframe` | `kfId` str | runId, stationId, tUnix, x, y, headingDeg, thumbB64, url | mapper `upsert_keyframe` | KeyframePanel, PinDetailDrawer |
@@ -71,7 +71,6 @@ All tables `public: true` except `writer`. Every run-scoped table has a btree in
 | `analysis_record` | `id` u64 autoInc | runId, sampleId (unique idx), candId, visitId, tUnix, imageUrl, label, confidence, caption, scoopHasItem, **assayType, a595, concentration, units, verdict, inLinearRange, standardCurveParams, simulated, seed u32, modelVersion** | brain `add_analysis` | PinDetailDrawer, **BradfordPanel** (P3) |
 | `telemetry` | `id` u64 autoInc | runId, tUnix, state, batteryV (-1 if unknown), cpuTempC, imuJson, scoopPose, uplinkBacklog | brain `insert_telemetry` (1 Hz) | HealthPanel |
 | `rover_status` | `key` str = `"rover"` (single row) | runId, tUnix, state, estop bool, x, y, headingDeg, fsmState, activeCandId, linkOk bool, updatedUnix | brain `upsert_rover_status` (2 Hz) | ConnectionBadge, EStopButton state, HealthPanel, map rover glyph |
-| `delay_config` | `key` str = `"delay"` (single row) | mode `earth\|mars`, compression f64, owltS f64, effectiveDelayS f64, horizonsEpochUnix, source `horizons\|cache\|manual` | brain `set_delay_config` | DelayPanel |
 | `event` | `id` u64 autoInc | runId, tUnix, src, level, kind, msg, dataJson | brain/mapper `log_event` | EventLog, TimelineScrubber ticks |
 | `writer` (private) | `identityHex` str | addedUnix, label | `claim_writer`, `add_writer` | — |
 
@@ -122,10 +121,10 @@ export const writer = table({ name: 'writer' /* private */ }, {
   identityHex: t.string().primaryKey(), addedUnix: t.f64(), label: t.string(),
 });
 // … mission, task_queue, keyframe, local_map_tile, global_tile, visit, telemetry,
-//   rover_status, delay_config, event exactly as in the §5 table.
+//   rover_status, event exactly as in the §5 table.
 
 const spacetimedb = schema({ run, mission, task_queue, pose, keyframe, local_map_tile, global_tile,
-  candidate, visit, analysis_record, telemetry, rover_status, delay_config, event, writer });
+  candidate, visit, analysis_record, telemetry, rover_status, event, writer });
 export default spacetimedb;
 ```
 ⚠️ The template-literal index helper must produce names unique per table (it does). If `t.string().unique()` + PK on another column misbehaves, drop `.unique()` and check in the reducer.
@@ -140,7 +139,7 @@ Arg order below **is the HTTP positional order** (camelCase names in TS; Python 
 | `start_run` | `runId, notes, tUnix` | Insert `run` status active; reject duplicate |
 | `end_run` | `runId, status, tUnix` | Set endedUnix + status |
 | `set_run_fused` | `runId, fused: bool` | |
-| `upsert_mission` | `missionId, runId, text, paramsJson, assumptionsJson, status, deliverAtUnix` | Insert or update |
+| `upsert_mission` | `missionId, runId, text, paramsJson, assumptionsJson, status` | Insert or update |
 | `upsert_task` | `taskId, runId, missionId, kind, ref, seq, status, note` | |
 | `insert_pose` | `runId, tUnix, x, y, headingDeg, source, sigmaXy` | Append |
 | `insert_telemetry` | `runId, tUnix, state, batteryV, cpuTempC, imuJson, scoopPose, uplinkBacklog` | Append |
@@ -151,7 +150,6 @@ Arg order below **is the HTTP positional order** (camelCase names in TS; Python 
 | `upsert_candidate` | `candId, runId, stationId, x, y, score, componentsJson, category, sizeM, status, rank, reason, thumbUrl, tUnix` | Insert or full-row update (status/rank changes) |
 | `mark_visited` | `visitId, runId, candId, x, y, radiusM, outcome, tUnix` | Insert visit; set candidate status to `visited`/`skipped`/`failed` per outcome |
 | `add_analysis` | `runId, sampleId, candId, visitId, tUnix, imageUrl, label, confidence, caption, scoopHasItem, assayType, a595, concentration, units, verdict, inLinearRange, standardCurveParams, simulated, seed, modelVersion` | **Reject unless `simulated === true`**; reject `assayType` ∉ {`""`, `bradford_sim`}; reject verdict ∉ {`""`,`below_detection`,`low`,`elevated`}; idempotent on `sampleId` (update if exists) |
-| `set_delay_config` | `mode, compression, owltS, effectiveDelayS, horizonsEpochUnix, source` | Single row key `"delay"` |
 | `log_event` | `runId, tUnix, src, level, kind, msg, dataJson` | Append; truncate `msg` to 500 chars |
 
 ### index.ts (sketch)
@@ -218,7 +216,7 @@ class RateLimitedWriter:
 
 ## 9. Subscriptions (dashboard, `dashboard/src/stdb/`)
 - One `DbConnection` for the app, memoized: `.withUri(import.meta.env.VITE_STDB_URI ?? 'ws://192.168.50.10:3000').withDatabaseName('marsrover')`.
-- **Global (always):** `tables.run`, `tables.roverStatus`, `tables.delayConfig`.
+- **Global (always):** `tables.run`, `tables.roverStatus`.
 - **Per selected run** (re-subscribe when the RunPicker changes): `tables.<x>.where(r => r.runId.eq(runId))` for mission, taskQueue, pose, keyframe, localMapTile, globalTile, candidate, visit, analysisRecord, telemetry, event.
 - React: `useTable(tables.candidate.where(r => r.runId.eq(runId)))` returns `[rows, isReady]`.
 - Live vs replay use the **same subscriptions**; replay filters client-side by `tUnix ≤ scrubT`.

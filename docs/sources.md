@@ -28,7 +28,6 @@ Everything in this spec that is a fact (not a design choice) comes from one of t
 | SuperCam PDS bundle readme | https://pds-geosciences.wustl.edu/m2020/urn-nasa-pds-mars2020_supercam/readme.txt |
 | Curiosity raw images JSON (unofficial, terms ⚠️) | https://mars.nasa.gov/api/v1/raw_image_items/?order=sol%20desc&per_page=N&page=0&condition_1=msl:mission |
 | Perseverance raw images JSON (unofficial, terms ⚠️) | https://mars.nasa.gov/rss/api/?feed=raw_images&category=mars2020&feedtype=json&num=N&page=0&order=sol+desc |
-| JPL Horizons API (OWLT, `QUANTITIES='20,21'`) | https://ssd.jpl.nasa.gov/api/horizons.api |
 | AEGIS on Perseverance (JPL) | https://doi.org/10.48577/jpl.nymwbh |
 
 ## Bradford assay (simulated; real parameters only)
@@ -54,6 +53,7 @@ Everything in this spec that is a fact (not a design choice) comes from one of t
 | Pololu D24V22F6 ($27.95) / D24V22F5 #2858 ($26.95) / D36V50F6 #4092 ($39.95) | https://www.pololu.com/product/2859 · https://www.pololu.com/product/2858 · https://www.pololu.com/product/4092 |
 | ASUS Ascent GX10 tech specs | https://www.asus.com/us/networking-iot-servers/desktop-ai-supercomputer/ultra-small-ai-supercomputers/asus-ascent-gx10/techspec/ |
 | pigpio does not support Pi 5 | https://github.com/joan2937/pigpio/issues/589 |
+| xAI Grok API: models, OpenAI-compatible base URL, structured outputs, speech-to-text | https://docs.x.ai/docs/models, https://docs.x.ai/docs/guides/structured-outputs, https://docs.x.ai/developers/model-capabilities/audio/speech-to-text |
 
 ## Not verified from a primary source
 - SpaceXSI track rules: known only from the team brief (U-17).

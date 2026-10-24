@@ -3,13 +3,13 @@
 > If code disagrees with this file, the code is wrong. Change process: [AGENTS.md §3](../AGENTS.md#3-changing-a-contract).
 
 ## 0. Version
-`CONTRACT_VERSION = 1.0.0` (2026-10-23)
+`CONTRACT_VERSION = 1.2.0` (2026-10-24: removed the Mars delay mode in 1.1.0; mission parsing via Grok in 1.2.0)
 
 ## 1. System in one page
 
 **Mission loop:**
 
-1. **Uplink.** In the dashboard, the user speaks or types a mission. The brain parses it (ASR → LLM → `mission` JSON). In Mars mode, the uplink is held for the simulated one-way light time.
+1. **Uplink.** In the dashboard, the user speaks or types a mission. The brain parses it (Grok speech-to-text and parsing → `mission` JSON; offline backup: `faster-whisper` + regex) and starts the run.
 2. **Survey.** The brain makes a station plan: home, plus extra stations if the radius is > 0.8 m. At each station the rover runs `station`: it spins 8 × 45°, captures a keyframe at each heading, builds a BEV local tile, finds rock proposals, saves everything on the SD card, and uploads it to the mapper.
 3. **Score.** The brain sends proposal crops to vision `/score` and gets component scores. It computes the final score, dedupes, drops anything inside the visited exclusion radius, and pushes the rest into a min-heap. The heap is capped at k, so the root is the weakest of the current top-k.
 4. **Plan.** The brain pops the top-k and orders it with a nearest-neighbor route from the current pose.
@@ -27,7 +27,7 @@ Every state change is written to SpacetimeDB. The dashboard reads **only** Space
 | Concern | Authority | Never |
 |---|---|---|
 | Rover actuation | Pi runtime (P2) executes primitives; refuses when estopped | Dashboard → Pi directly |
-| Mission state, planning, delay | brain (P4) | Dashboard writing DB rows that change behavior |
+| Mission state, planning | brain (P4) | Dashboard writing DB rows that change behavior |
 | Persistent state / history | SpacetimeDB (P4 module) | Services keeping private copies as truth (except Pi local store, which is a buffer + backup) |
 | Images / big files | mapper disk `/data/runs/…` (P3), URLs in DB | Full-res images inline in DB |
 
@@ -93,21 +93,21 @@ ares-scout/
 ├── gx10/                          no shared files: each service dir has its own requirements.txt (same owner)
 │   ├── brain/                     P4 (including voice/)
 │   │   ├── requirements.txt
+│   │   ├── settings.py            config/run.yaml loader (§8 constants)
+│   │   ├── tests/                 unit tests (scoring, heap, dedupe, route, run.yaml ↔ §8)
 │   │   ├── app.py                 FastAPI :8000 (REST + WS) – dashboard command API
 │   │   ├── fsm.py                 run/mission state machine
 │   │   ├── planner.py             station plan, heap top-k, NN route, replan on skip
 │   │   ├── scoring.py             weighted score + explanation strings
 │   │   ├── dedupe.py              spatial+embedding merge
 │   │   ├── visited.py             exclusion-radius checks
-│   │   ├── mars_delay.py          delay queue; estop bypass
-│   │   ├── horizons.py            JPL Horizons OWLT fetch + cache
 │   │   ├── rover_link.py          WS client to Pi, cmd tracking, heartbeat
 │   │   ├── overhead_link.py       subscribes to overhead :8300
 │   │   ├── stdb_writer.py         rate-limited writes (poses, status) via StdbClient
 │   │   └── voice/                 P4  (ASR + NLU)
 │   │       ├── requirements.txt
-│   │       ├── asr.py             audio bytes → text (faster-whisper)
-│   │       └── nlu.py             text → Mission (Ollama JSON mode) + validation
+│   │       ├── asr.py             audio bytes → text (Grok STT; faster-whisper offline backup)
+│   │       └── nlu.py             text → Mission (Grok structured output, regex fallback) + validation
 │   ├── vision/                    P3
 │   │   ├── requirements.txt
 │   │   ├── app.py                 FastAPI :8100 /score /analyze /health
@@ -141,7 +141,7 @@ ares-scout/
 │       ├── api/brain.ts           REST client to brain :8000
 │       ├── module_bindings/       GENERATED (never hand-edit)
 │       ├── panels/                MissionPanel, TaskQueuePanel, KeyframePanel, HealthPanel,
-│       │                          DelayPanel, ConnectionBadge, EStopButton, QuickBar,
+│       │                          ConnectionBadge, EStopButton, QuickBar,
 │       │                          VoiceButton, TimelineScrubber, PinDetailDrawer, RunPicker, EventLog
 │       ├── map/                   P3: MapView.tsx, layers/{tiles,trail,pins,exclusion,stations}.ts, camera.ts, map.css
 │       └── assay/                 P3: BradfordPanel.tsx, Cuvette.tsx, StandardCurveChart.tsx, format.ts, assay.css, assay.test.ts
@@ -168,9 +168,9 @@ ares-scout/
 - **Python deps.** Each service dir has its own `requirements.txt`, owned by that dir's owner. There's no shared GX10 dependency file.
 - **Dashboard deps and styles.** `dashboard/package.json` and `src/styles.css` are P4's. P3 components only *read* the CSS variables, and keep their own styles in `map/map.css` / `assay/assay.css`. If P3 needs an npm dep, they request it in `docs/requests/` (doc 06 aims for no extra deps).
 - **Dashboard ↔ map/assay.** `MapViewProps` and `BradfordPanelProps` (doc 06 §4) are the whole interface. P4 renders the components and passes rows; P3 never opens an STDB connection.
-- **Model config.** `config/models.yaml` (vision/ML models) is P3's, and the only P3 file in `config/`. Voice settings (ASR size, NLU model) live in `config/run.yaml` (P4).
+- **Model config.** `config/models.yaml` (vision/ML models) is P3's, and the only P3 file in `config/`. Voice settings (ASR size, Grok model) live in `config/run.yaml` (P4).
 - **Arena photos.** P1 captures and labels them into `ml/data/arena/`. That's gitignored data, not repo files, in the layout docs/03 defines. P3 owns `arena_fewshot.py`, which consumes them.
-- **Runtime `data/`.** The mapper (P3) owns the `data/runs/<run>/` layout. `eventlog.py` (P4) only appends `events.jsonl` in it. The brain (P4) owns `data/horizons_cache.json`.
+- **Runtime `data/`.** The mapper (P3) owns the `data/runs/<run>/` layout. `eventlog.py` (P4) only appends `events.jsonl` in it.
 
 ## 3. Network and ports
 
@@ -178,7 +178,7 @@ Travel router **SSID `marsnet`**, subnet `192.168.50.0/24`, gateway `192.168.50.
 
 | Host | IP | Link | Notes |
 |---|---|---|---|
-| Router | 192.168.50.1 | — | No internet required at runtime |
+| Router | 192.168.50.1 | — | Internet uplink optional (e.g. phone hotspot as the router's WAN) for Grok voice; everything else is LAN-only |
 | GX10 | 192.168.50.10 | Ethernet to router | All services; datasets pre-downloaded |
 | Pi (rover) | 192.168.50.20 | Wi-Fi | Hostname `rover.local` as backup |
 | Laptop (dashboard) | 192.168.50.30 | Wi-Fi | Browser + `npm run dev` |
@@ -192,7 +192,8 @@ Travel router **SSID `marsnet`**, subnet `192.168.50.0/24`, gateway `192.168.50.
 | 8200 | GX10 | mapper `/ingest/*` `/fuse/*` `/files/*` | HTTP | P3 |
 | 8300 | GX10 | overhead `/pose` | WebSocket JSON | P2 |
 | 3000 | GX10 | SpacetimeDB standalone (`spacetime start --listen-addr 0.0.0.0:3000`) | HTTP + WS | P4 |
-| 11434 | GX10 | Ollama | HTTP | P3 (model choice) |
+| 11434 | GX10 | Ollama (optional captions only) | HTTP | P3 (model choice) |
+| 443 | api.x.ai | Grok API: speech-to-text + mission parsing (internet; offline backup on the GX10) | HTTPS | P4 |
 | 5173 | Laptop | dashboard dev server (Vite default) | HTTP | P4 |
 
 CORS: brain, mapper and vision allow origin `http://192.168.50.30:5173` and `http://localhost:5173`.
@@ -351,20 +352,19 @@ Assay math and verdict bands: [P3 §Bradford](roles/P3-perception-ai.md#bradford
 `{"visit_id":"v_0002","run_id","cand_id","x","y","radius_m":0.20,"t","outcome":"sampled|empty_scoop|unreachable|skipped"}`
 
 ### 6.11 Dashboard → brain REST (`http://192.168.50.10:8000`)
-| Method/path | Body | Effect | Delayed in Mars mode? |
-|---|---|---|---|
-| `POST /api/run/start` | `{notes?}` | new run_id, `start_run` | no (setup) |
-| `POST /api/run/end` | `{}` | return home → end_run → fuse | yes |
-| `POST /api/mission/voice` | `audio/webm` body | ASR+NLU → mission | yes |
-| `POST /api/mission/text` | `{text}` | NLU → mission | yes |
-| `POST /api/approve` | `{mission_id, approve:bool}` | suggest-mode gate | yes |
-| `POST /api/quick` | `{cmd:"pause"\|"resume"\|"stop"\|"skip"\|"status"\|"come_back"}` | quick command | yes (**except `stop`**) |
-| `POST /api/estop` | `{}` | estop now | **never** |
-| `POST /api/estop/clear` | `{}` | clear latch | no |
-| `POST /api/delay` | `{mode:"earth"\|"mars", compression: 1–1000}` | set delay | no (it's the knob) |
-| `GET /api/health` | — | `{brain, rover_link, vision, mapper, stdb, overhead}` each `"ok"\|"down"\|"degraded"` | — |
+| Method/path | Body | Effect |
+|---|---|---|
+| `POST /api/run/start` | `{notes?}` | new run_id, `start_run` |
+| `POST /api/run/end` | `{}` | return home → end_run → fuse |
+| `POST /api/mission/voice` | `audio/webm` body | ASR+NLU → mission |
+| `POST /api/mission/text` | `{text}` | NLU → mission |
+| `POST /api/approve` | `{mission_id, approve:bool}` | suggest-mode gate |
+| `POST /api/quick` | `{cmd:"pause"\|"resume"\|"stop"\|"skip"\|"status"\|"come_back"}` | quick command; `stop` bypasses the FSM queue |
+| `POST /api/estop` | `{}` | estop now, bypassing everything |
+| `POST /api/estop/clear` | `{}` | clear latch |
+| `GET /api/health` | — | `{brain, rover_link, vision, mapper, stdb, overhead}` each `"ok"\|"down"\|"degraded"` |
 
-Every command returns `{"accepted":true,"cmd_uid":"u_…","deliver_at":t}`. `deliver_at` > now in Mars mode; the dashboard shows the countdown.
+Every command returns `{"accepted":true,"cmd_uid":"u_…"}`.
 
 ### 6.12 Overhead pose (`ws://192.168.50.10:8300/pose`)
 `{"type":"overhead_pose","t","src":"overhead","x","y","heading_deg","marker_id":0,"reproj_err_px":0.8,"visible":true}` at 10 Hz.
@@ -376,7 +376,7 @@ Every command returns `{"accepted":true,"cmd_uid":"u_…","deliver_at":t}`. `del
 ```mermaid
 stateDiagram-v2
   [*] --> IDLE
-  IDLE --> SURVEY: mission accepted (after delay)
+  IDLE --> SURVEY: mission accepted
   SURVEY --> SURVEY: next station
   SURVEY --> PLAN: stations done
   PLAN --> AWAIT_APPROVAL: mode=suggest
@@ -409,11 +409,5 @@ stateDiagram-v2
 - **Route**: nearest-neighbor from the current pose over the heap contents; recomputed after each visit (pose drifts).
 - **Reason string** (`scoring.explain`): the top 2 positive components with values + category match + distance, ≤ 140 chars.
 
-## 9. Mars delay
-- One-way light time (OWLT) from JPL Horizons: `COMMAND='499'`, `CENTER='500@399'`, `QUANTITIES='20,21'` (col 21 = 1-way down light time, minutes). Verified 2026-10-23: 2026-10-24 00:00 UT → 12.444 min, Δ = 1.496 AU.
-- Cached in `data/horizons_cache.json` (fetch at setup while there's internet; venue may be offline).
-- `effective_delay_s = OWLT_s / compression`. Compression slider 1–1000 (log). Default 74.7 ≈ 10 s.
-- Applies to dashboard→brain commands (uplink) **and** to what the dashboard shows as "received" (downlink): rows carry `t_unix`; the dashboard in Mars mode renders state as of `now − effective_delay_s`. **E-STOP and `stop` are never delayed.**
-
-## 10. Contract copies
+## 9. Contract copies
 Role docs end with copies of the parts they use. When you change this file, update those copies.

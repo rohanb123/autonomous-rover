@@ -465,15 +465,9 @@ class QuickReq(_Model):
     cmd: Literal["pause", "resume", "stop", "skip", "status", "come_back"]
 
 
-class DelayReq(_Model):
-    mode: Literal["earth", "mars"]
-    compression: float = Field(ge=1.0, le=1000.0)
-
-
 class CommandAccepted(_Model):
     accepted: bool
     cmd_uid: str
-    deliver_at: float
 
 
 class HealthResp(_Model):

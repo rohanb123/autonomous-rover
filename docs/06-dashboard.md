@@ -19,7 +19,6 @@ Env: `VITE_STDB_URI=ws://192.168.50.10:3000`, `VITE_STDB_DB=marsrover`, `VITE_BR
 ## 2. Modes
 - **Live**: subscriptions for the active run (`run.status = active`). The map shows local tiles as they arrive, the rover glyph and trail, candidates, top-k ranks, visited circles. Controls are enabled.
 - **Replay**: pick any run. Global tiles (if `run.fused`), else the local tiles. A **timeline scrubber** sets `scrubT`; every layer and panel shows rows with `tUnix ≤ scrubT`. Controls are disabled (read-only). Clicking a pin opens the **PinDetailDrawer** (photo, score breakdown, reason, analysis, and the **BradfordPanel** for sampled pins). Reaching a sample's `tUnix` while playing auto-opens it.
-- **Earth/Mars** (live only): in Mars mode the brain delays commands; the dashboard *also* delays what it shows by `effectiveDelayS` (renders rows with `tUnix ≤ now − delay`), with a banner "Signal from Mars: 10.0 s old".
 
 ## 3. Layout (wireframe)
 ```
@@ -36,10 +35,9 @@ Env: `VITE_STDB_URI=ws://192.168.50.10:3000`, `VITE_STDB_DB=marsrover`, `VITE_BR
 │                                              │  #2 c_0012 0.58 …     status: queued          │
 │                                              ├───────────────────────────────────────────────┤
 │                                              │ KeyframePanel (latest kf thumb + heading)     │
-├──────────────────────────────────────────────┼───────────────────────────────────────────────┤
-│ QuickBar: [pause][resume][stop][skip][status][come back]  │ DelayPanel: Earth◯ Mars●     │
-│                                              │  compression ──●── 74.7×  OWLT 746.6 s →10.0 s │
 ├──────────────────────────────────────────────┴───────────────────────────────────────────────┤
+│ QuickBar: [pause][resume][stop][skip][status][come back]                                     │
+├──────────────────────────────────────────────────────────────────────────────────────────────┤
 │ TimelineScrubber (replay): |──●──────── events ticks ─────| ▶ 1× 4×   t = 10:21:34 PDT       │
 │ HealthPanel: state STATION · cpu 55 °C · link ok · uplink backlog 0 │ EventLog (last 50)     │
 └──────────────────────────────────────────────────────────────────────────────────────────────┘
@@ -93,12 +91,11 @@ Row types come from `module_bindings`.
 |---|---|---|---|---|
 | TopBar / RunPicker | P4 | `run` | `POST /api/run/start`, `/api/run/end` | RunPicker lists runs newest first |
 | ConnectionBadge | P4 | `rover_status.updatedUnix` | `GET /api/health` (every 2 s) | STDB: connect/disconnect callbacks. Rover: stale if `now − updatedUnix > 2 s`. Brain: health fetch fails → red |
-| EStopButton | P4 | `rover_status.estop` | `POST /api/estop`, `/api/estop/clear` | Always enabled in live mode; **never delayed**; keyboard: Space bar (with confirm on clear only) |
-| MissionPanel + VoiceButton | P4 | `mission` | `/api/mission/voice`, `/api/mission/text`, `/api/approve` | Shows parsed params and `assumptions`; "arrives on Mars in 8.2 s" countdown from `deliverAtUnix` |
+| EStopButton | P4 | `rover_status.estop` | `POST /api/estop`, `/api/estop/clear` | Always enabled in live mode; bypasses the FSM and goes straight to the rover; keyboard: Space bar (with confirm on clear only) |
+| MissionPanel + VoiceButton | P4 | `mission` | `/api/mission/voice`, `/api/mission/text`, `/api/approve` | Shows parsed params and `assumptions` |
 | TaskQueuePanel | P4 | `task_queue`, `candidate` (rank ≥ 0) | — | Top-k sorted by rank with score, category, reason; queue below |
 | KeyframePanel | P4 | `keyframe` (latest by tUnix) | — | `data:image/jpeg;base64,` + thumbB64; click → open `url` |
 | QuickBar | P4 | `rover_status.fsmState` | `/api/quick` | Disabled in replay |
-| DelayPanel | P4 | `delay_config` | `/api/delay` | Log slider 1–1000; shows OWLT (s, from Horizons) and effective delay |
 | HealthPanel | P4 | `telemetry` (latest), `rover_status` | — | |
 | EventLog | P4 | `event` | — | Last 50, level-colored |
 | TimelineScrubber | P4 | `pose`, `event`, `analysis_record` (ticks) | — | Range = run start…end; play at 1×/4×/16× |
@@ -112,6 +109,7 @@ No component writes to STDB. No component talks to the rover.
 - World = mission frame metres. `camera.ts`: `worldToScreen(x, y)`, with +x **up** on screen (matches "forward" at start) and +y left. Default view fits all poses + 0.5 m.
 - **Local tile** (BEV, rover frame at capture): draw image centered at (x, y), rotated by `headingDeg`, size `wPx·resMPx` m. Newer tiles drawn on top. Opacity 0.85.
 - **Global tile** (replay, mission frame, axis-aligned): draw at `originX, originY` with `resMPx`. Hidden in live mode unless `run.fused`.
+  - **Convention** (the mapper writes it, MapView reads it): same image orientation as BEV tiles, so image up = mission +x and image left = mission +y. `(originX, originY)` is the mission position of the tile's **top-left pixel corner** (its max-x, max-y corner). Pixel (col, row) → `x = originX − row·resMPx`, `y = originY − col·resMPx`. Tiles are 512 px; id `g_<run>_<ix>_<iy>`. `mocks/fake_brain.py` produces tiles this way.
 - **Trail**: polyline of poses (color by source: dr gray, aruco green, fused white). Rover glyph = triangle at the latest pose (or at the scrubbed pose).
 - **Pins**: candidates colored by status (new gray, queued yellow, active orange, visited green, skipped/excluded dim). Rank number inside top-k pins. Size ∝ score.
 - **Exclusion rings**: circle of `radiusM` at each visit, dashed.
@@ -140,7 +138,7 @@ No component writes to STDB. No component talks to the rover.
 | D1 | `npm run build` passes with `strict: true`, zero TS errors | P4 |
 | D2 | With `mocks/fake_brain.py` writing a scripted run, Live shows pose trail, 3 local tiles, ≥ 5 candidates with ranks, 2 visits with rings, the latest keyframe, within 1 s of each write | P4 + P3 (map) |
 | D3 | Killing STDB turns the STDB dot red within 3 s; stopping fake_brain status writes turns Rover red within 3 s | P4 |
-| D4 | E-STOP click → `POST /api/estop` fires immediately in Mars mode with compression 1 (12+ min delay) | P4 |
+| D4 | E-STOP click → `POST /api/estop` fires immediately, even while the brain is mid-command | P4 |
 | D5 | Replay: the scrubber at t₀ shows only rows with `tUnix ≤ t₀`; dragging back hides later pins | P4 + P3 |
 | D6 | Click a sampled pin → drawer with photo, score breakdown, reason, analysis, BradfordPanel | P4 (drawer), P3 (panel) |
 | D7 | BradfordPanel renders the golden record (00 §6.7) → A595 0.2585 (4 decimals), 282 µg/mL, verdict LOW, sample dot on the line between the 250 and 500 standards | P3 |

@@ -9,6 +9,7 @@
     "noEmit": true,
     "skipLibCheck": true,
     "isolatedModules": true,
+    "moduleDetection": "force",
     "resolveJsonModule": true,
     "noUnusedLocals": true,
     "noUnusedParameters": true,

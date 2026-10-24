@@ -1,4 +1,4 @@
-# Mirror of docs/00-overview-and-contracts.md §4, §6.1, §8, §9. Doc 00 wins; a test compares them.
+# Mirror of docs/00-overview-and-contracts.md §4, §6.1, §8. Doc 00 wins; a test compares them.
 
 mission_defaults:          # from the §6.1 example
   radius_m: 1.5
@@ -50,14 +50,19 @@ timeouts_s:
   scoop: 30
   clock_sync_tolerance: 0.05
 
-mars_delay:
-  horizons: {command: "499", center: "500@399", quantities: "20,21"}
-  cache_path: data/horizons_cache.json
-  compression_range: [1, 1000]
-  compression_default: 74.7  # ≈ 10 s effective delay
-  never_delayed: [estop, stop]
 
 voice:                     # P4 (gx10/brain/voice/)
-  asr_faster_whisper_size: small   # small/base, en; CPU int8 fallback
+  # Speech-to-text: Grok STT when online; faster-whisper on the GX10 as the offline backup.
+  asr_provider: xai
+  asr_model: grok-voice-transcribe-2.0
+  asr_timeout_s: 6.0                    # then fall back to faster-whisper
+  asr_keyterms: [float rock, layered, veined, bedrock, pebble, sand, meter, come back]
+  asr_fallback: faster-whisper
+  asr_faster_whisper_size: small        # small/base, en; CPU int8 fallback
   asr_language: en
-  nlu_ollama_model: ""     # UNVERIFIED: small instruct model with JSON mode; pull before the venue
+  # Mission parsing: Grok structured outputs when online; regex parser as the offline backup.
+  nlu_provider: xai
+  nlu_base_url: https://api.x.ai/v1     # OpenAI-compatible; key in config/.env XAI_API_KEY
+  nlu_model: grok-4.20-0309-non-reasoning   # fast/cheap; flagship is grok-4.7
+  nlu_timeout_s: 4.0                    # then fall back to regex
+  nlu_fallback: regex

@@ -1,7 +1,7 @@
 # P4: Brain, data & dashboard lead (SW/backend lead)
 
 ## 1. Goal
-Own the **decision loop** and the **single source of truth**: the brain service that turns a mission into a mini science campaign (survey → score → top-k → scoop → log), the SpacetimeDB module, the dashboard app shell and panels, the shared contracts package, Mars delay, and integration. You are also the **integration lead**: you run the milestones in [04](../04-integration-timeline.md) and approve contract changes.
+Own the **decision loop** and the **single source of truth**: the brain service that turns a mission into a mini science campaign (survey → score → top-k → scoop → log), the SpacetimeDB module, the dashboard app shell and panels, the shared contracts package, and integration. You are also the **integration lead**: you run the milestones in [04](../04-integration-timeline.md) and approve contract changes.
 
 ## 2. Scope
 | Yours | Not yours |
@@ -13,7 +13,7 @@ Own the **decision loop** and the **single source of truth**: the brain service 
 | README, AGENTS, CLAUDE.md, docs 00/02/04/05/06/sources/TEAM | docs 01 (P1), 03 (P3), other role files |
 
 ## 3. Hardware / environment
-GX10 at 192.168.50.10 (Ethernet), travel router `marsnet`, dashboard laptop .30. SpacetimeDB **v2.13.0 standalone** (ARM64 build exists) on :3000; Node 20+ for the module and dashboard; Python 3.11+ (`fastapi`, `uvicorn`, `websockets`, `httpx`, `pydantic` v2, `numpy`, `faster-whisper` ⚠️ ARM64/CUDA wheel, CPU `int8` fallback). No physical parts.
+GX10 at 192.168.50.10 (Ethernet), travel router `marsnet`, dashboard laptop .30. SpacetimeDB **v2.13.0 standalone** (ARM64 build exists) on :3000; Node 20+ for the module and dashboard; Python 3.11+ (`fastapi`, `uvicorn`, `websockets`, `httpx`, `pydantic` v2, `numpy`, `faster-whisper` ⚠️ ARM64/CUDA wheel, CPU `int8` fallback, `openai` SDK for Grok). Internet at the venue for Grok voice; the offline backup needs none. No physical parts.
 
 ## 4. Files and function signatures
 ```python
@@ -25,10 +25,10 @@ stdb_http.py: class StdbClient; class RateLimitedWriter   (02 §8)
 eventlog.py: def log(run_id: str, src: str, level: str, kind: str, msg: str, data: dict | None = None) -> None   # data/runs/<run>/events.jsonl
 
 # gx10/brain/voice/asr.py
-def transcribe(audio: bytes, mime: str = "audio/webm") -> str        # ffmpeg → 16 kHz wav → faster-whisper (small/base, en)
+def transcribe(audio: bytes, mime: str = "audio/webm") -> str        # Grok STT (POST /v1/stt, keyterms); offline: ffmpeg → 16 kHz wav → faster-whisper
 
 # gx10/brain/voice/nlu.py
-def parse_mission(text: str, run_id: str, defaults: dict) -> dict     # → Mission (00 §6.1) + assumptions; Ollama JSON mode; regex fallback
+def parse_mission(text: str, run_id: str, defaults: dict) -> dict     # → Mission (00 §6.1) + assumptions; Grok structured output, regex fallback
 def parse_quick(text: str) -> str | None                              # "stop"/"pause"/… if the utterance is a quick command
 
 # gx10/brain/scoring.py
@@ -37,10 +37,12 @@ def category_score(probs: dict[str,float], priors: dict[str,float], wanted: set[
 def explain(components: dict, category: str, wanted: set[str], distance_m: float) -> str             # ≤ 140 chars
 
 # gx10/brain/dedupe.py
-def merge_or_new(prop: dict, cands: dict[str, Candidate], xy_thr: float = 0.15, cos_thr: float = 0.85, hard_xy: float = 0.06) -> str | None  # existing cand_id or None
+def merge_or_new(prop: dict, cands: dict[str, Candidate], embeddings: dict[str, list[float]]) -> str | None  # existing cand_id or None; thresholds from run.yaml
+def merge(cand: Candidate, prop_id: str, new: Candidate) -> Candidate   # keeps max score, appends prop_id
 
 # gx10/brain/visited.py
-def excluded(xy: tuple[float,float], visits: list[Visit], radius_m: float = 0.20) -> bool
+def excluded(xy: tuple[float,float], visits: list[Visit], radius_m: float | None = None) -> bool   # default: each visit's radius_m (0.20)
+def newly_excluded(cands: dict[str, Candidate], visits: list[Visit]) -> list[str]
 
 # gx10/brain/planner.py
 def station_plan(radius_m: float) -> list[tuple[float,float]]          # home; + 4 points at 0.6·radius if radius > 0.8
@@ -70,45 +72,37 @@ class OverheadLink:
     async def run(self, url: str = "ws://192.168.50.10:8300/pose") -> None
     def latest(self, max_age_s: float = 0.5) -> OverheadPose | None   # brain sends set_pose(source="aruco") at each station if fresh and reproj_err_px < 2
 
-# gx10/brain/horizons.py
-def owlt_seconds(when_utc: datetime, cache_path: str = "data/horizons_cache.json") -> tuple[float, str]   # (seconds, "horizons"|"cache")
-
-# gx10/brain/mars_delay.py
-class DelayQueue:
-    def set(self, mode: str, compression: float) -> float                  # returns effective_delay_s
-    def submit(self, cmd_uid: str, fn: Callable[[], Awaitable], bypass: bool = False) -> float   # returns deliver_at
-
 # gx10/brain/stdb_writer.py
 class BrainDb:   # thin wrappers that call RateLimitedWriter / StdbClient with positional args from 02 §6
     def run_started(...); def mission(...); def task(...); def pose(...); def status(...); def telemetry(...)
-    def candidate(c: Candidate); def visit(v: Visit); def analysis(a: AnalysisResult, cand: Candidate, visit: Visit); def delay(...); def event(...)
+    def candidate(c: Candidate); def visit(v: Visit); def analysis(a: AnalysisResult, cand: Candidate, visit: Visit); def event(...)
 
 # gx10/brain/app.py  FastAPI :8000  (00 §6.11)
 ```
 TypeScript: `spacetimedb/src/schema.ts`, `index.ts` (02 §5–6); `dashboard/src/{main.tsx, App.tsx, stdb/connection.ts, stdb/hooks.ts, api/brain.ts, panels/*}` (06 §4–5).
 
 ## 5. The campaign loop (what `RunFSM` does)
-1. `/api/mission/*` → (voice: `transcribe`) → `parse_mission` → `upsert_mission(status=delayed)` → `DelayQueue.submit` → at `deliver_at`: `status=active`, FSM → SURVEY.
+1. `/api/mission/*` → (voice: `transcribe`) → `parse_mission` → `upsert_mission(status=parsed)` → `status=active`, FSM → SURVEY.
 2. **SURVEY:** for each point in `station_plan`: `turn`/`drive` there → if overhead fresh, `set_pose` → `station` → for each proposal: `/score` → `final_score` → `merge_or_new` → `excluded`? → `upsert_candidate` → `TopK.offer`. Ranks → `upsert_candidate` (rank changes only).
 3. **PLAN:** `nn_route(pose, topk)` → `upsert_task` ×k. `suggest` mode → AWAIT_APPROVAL.
 4. **INVESTIGATE** each: `approach` (E_LOST_TARGET → outcome `unreachable`) → `scoop` → `/analyze(interest_score=score)` → if `scoop_has_item` false: one retry (re-approach + scoop), then outcome `empty_scoop` → `dump` → `mark_visited` (radius 0.20) → `add_analysis` → re-run `excluded` over remaining candidates → recompute the NN route from the new pose.
 5. **RETURN:** drive home → `end_run` → `POST mapper /fuse/{run_id}` → run status `done`.
 - Every transition: `log_event` + events.jsonl. Every 0.5 s: `upsert_rover_status`.
 
-## 6. Mars delay
-`DelayQueue` holds commands until `deliver_at = now + effective_delay_s` (Mars) or now (Earth). `stop` and E-STOP use `bypass=True`. `effective_delay_s = OWLT / compression`; OWLT from Horizons (cached at setup: 2026-10-24 00:00 UT → 12.444 min). Default compression 74.7 → ~10 s. Write `set_delay_config` on every change.
+## 6. Stop and E-STOP
+Commands from the dashboard run in order through the FSM. `stop` and E-STOP skip that queue: `/api/estop` calls `RoverLink.estop()` directly, and `stop` preempts the current op. Neither waits on the FSM lock or on any STDB write.
 
 ## 7. Build order, checkpoints, acceptance
 | Done by | Build | ✅ Checkpoint |
 |---|---|---|
 | by I0 | Repo skeleton (tree from 00 §2), `shared/py` schemas + tests, router + IPs, STDB install + module v0 (run, pose, rover_status, event) + `claim_writer`, `fake_brain.py` | **I0:** STDB HTTP positional-arg call works (`insert_pose` via `StdbClient`) **[resolves U-11]**; dashboard skeleton shows a pose from fake_brain; brain connects to fake_rover |
 | by I1 | All 15 tables + reducers + bindings; brain app, RoverLink, FSM skeleton (SURVEY only), BrainDb; dashboard shell + ConnectionBadge + EStop + QuickBar + MissionPanel (text) | **I1:** text mission → fake_rover station → candidates in STDB → TaskQueuePanel |
-| by I2 | scoring, dedupe, TopK, nn_route, visited; INVESTIGATE with fake_rover/fake_vision; Horizons + DelayQueue + DelayPanel; overhead_link | **I2:** full campaign on mocks with Mars delay; E-STOP immediate (06 D4) |
+| by I2 | scoring, dedupe, TopK, nn_route, visited; INVESTIGATE with fake_rover/fake_vision; overhead_link | **I2:** full campaign on mocks; E-STOP immediate (06 D4) |
 | by I3 | Real rover integration with P2; remaining panels; TimelineScrubber + PinDetailDrawer; replay_run | **I3:** real rover runs a mission end to end; replay works |
-| by I4 | Voice: test `faster-whisper` + the Ollama NLU model on the GX10 (U-15), asr + nlu with 10 test utterances (8/10 parse to the expected Mission), wiring; suggest mode; failure paths (empty scoop, unreachable, link loss) | **I4:** voice mission; 3 sampled pins with Bradford panel in replay |
+| by I4 | Voice: Grok STT + Grok parsing with your xAI key, then the offline path (`faster-whisper` on the GX10, U-15, + regex) with the network cut; asr + nlu with 10 test utterances (8/10 parse to the expected Mission), wiring; suggest mode; failure paths (empty scoop, unreachable, link loss) | **I4:** voice mission; 3 sampled pins with Bradford panel in replay |
 | by I5 | Soak tests (3 consecutive runs), `reset_db.sh`, docs updated to as-built | **I5 freeze** |
 
-**Acceptance:** 02 §12 (STDB 1–6), 06 D1–D6, plus brain unit tests: `test_scoring.py` (golden numbers from 00 §8), `test_topk.py` (heap keeps the k best under random insert order), `test_dedupe.py`, `test_visited.py`, `test_route.py`, `test_delay.py` (stop/estop bypass; others wait `effective_delay_s ± 0.1 s`), `test_fsm.py` (scripted fake_rover run reaches DONE; estop from every state → ESTOP).
+**Acceptance:** 02 §12 (STDB 1–6), 06 D1–D6, plus brain unit tests: `test_scoring.py` (golden numbers from 00 §8), `test_topk.py` (heap keeps the k best under random insert order), `test_dedupe.py`, `test_visited.py`, `test_route.py`, `test_stop.py` (stop/estop bypass the FSM queue), `test_fsm.py` (scripted fake_rover run reaches DONE; estop from every state → ESTOP).
 
 ## 8. Mocks
 - **You provide** `fake_brain.py` (writes a scripted 3-minute run to STDB through the real reducers, incl. 2 analysis rows with the golden assay: everyone can build the dashboard without hardware) and `replay_run.py` (events.jsonl → fresh DB).
@@ -116,8 +110,9 @@ TypeScript: `spacetimedb/src/schema.ts`, `index.ts` (02 §5–6); `dashboard/src
 
 ## 9. Watch-outs
 - **Never block the control loop on STDB** (queue + rate limit; events.jsonl backup).
-- E-STOP path: dashboard → `/api/estop` → `RoverLink.estop()` directly, no DelayQueue, no FSM lock. Test it every milestone.
-- Ollama JSON can still be invalid → validate with pydantic, fall back to the regex parser, and list assumptions.
+- E-STOP path: dashboard → `/api/estop` → `RoverLink.estop()` directly, no FSM lock. Test it every milestone.
+- Grok needs internet: on timeout (`asr_timeout_s` / `nlu_timeout_s`) or any API error, fall back to `faster-whisper` / the regex parser, list what it assumed, and log which path ran (`event` kind `voice_offline`). Always validate Grok's output with the `Mission` pydantic model too, and clamp to the 00 §6.1 ranges.
+- `XAI_API_KEY` lives in `config/.env` only. Never log it or send it to the dashboard.
 - Heartbeats must keep flowing while the FSM awaits long ops, or the Pi stops mid-drive.
 - After every schema change: republish (`--delete-data=always` in dev), rerun `claim_writer`/`add_writer`, regenerate bindings.
 - Rank updates can flood `upsert_candidate`; only write rows whose rank/status changed.
@@ -125,10 +120,9 @@ TypeScript: `spacetimedb/src/schema.ts`, `index.ts` (02 §5–6); `dashboard/src
 - You approve contract changes; bump `CONTRACT_VERSION` and update every role file's contract copy.
 
 ## 10. Contracts you need (copies; source of truth = [00](../00-overview-and-contracts.md))
-**Ports:** brain :8000 (yours), STDB :3000 (yours), vision :8100, mapper :8200, overhead WS :8300/pose, Pi WS :8765/rover, Ollama :11434, dashboard :5173.
+**Ports:** brain :8000 (yours), STDB :3000 (yours), vision :8100, mapper :8200, overhead WS :8300/pose, Pi WS :8765/rover, Grok `https://api.x.ai/v1`, dashboard :5173.
 **Rover ops:** `start_run, drive{dist_m,speed}, turn{deg,speed}, stop, estop, clear_estop, set_pose{x,y,heading_deg,source}, station{station_id,n_views:8,step_deg:45}, approach{cand_id,x,y}, scoop{sample_id}, dump, scoop_pose{pose}, snapshot, heartbeat`; replies `ack` (≤ 0.5 s) / `done{result}` / `err{code}`; codes `E_ESTOP E_BUSY E_TIMEOUT E_BAD_ARGS E_TILT E_CAMERA E_LOST_TARGET E_UPLOAD E_SCOOP E_INTERNAL`. Timeouts: station 60 s, approach 45 s, scoop 30 s. Heartbeat 0.25 s.
-**REST (yours):** `POST /api/run/start, /api/run/end, /api/mission/voice (audio/webm), /api/mission/text {text}, /api/approve {mission_id, approve}, /api/quick {cmd}, /api/estop, /api/estop/clear, /api/delay {mode, compression}`, `GET /api/health`; every command returns `{accepted, cmd_uid, deliver_at}`. `stop` and estop never delayed.
+**REST (yours):** `POST /api/run/start, /api/run/end, /api/mission/voice (audio/webm), /api/mission/text {text}, /api/approve {mission_id, approve}, /api/quick {cmd}, /api/estop, /api/estop/clear`, `GET /api/health`; every command returns `{accepted, cmd_uid}`. `stop` and estop bypass the FSM queue.
 **Scoring:** `score = 0.35·novelty + 0.25·visual + 0.15·pickable + 0.15·category_score − 0.10·min(dist/radius,1)`; dedupe ≤ 0.15 m & cos ≥ 0.85, or ≤ 0.06 m; exclusion radius 0.20 m; min-heap capped at k; NN route recomputed after each visit; reason ≤ 140 chars.
 **Vision:** `/score {run_id, items[{prop_id,crop_url,size_m,xy}]}` → components; `/analyze {run_id, sample_id, cand_id, image_url, interest_score}` → `AnalysisResult` + `assay` (00 §6.7). Mapper: `POST /fuse/{run_id}`.
-**Reducers you call:** `start_run, end_run, upsert_mission, upsert_task, insert_pose, insert_telemetry, upsert_rover_status, upsert_candidate, mark_visited, add_analysis, set_delay_config, log_event` (arg order in 02 §6). `add_analysis` maps `assay` fields → `assayType, a595, concentration, units, verdict, inLinearRange, standardCurveParams=json.dumps(...), simulated, seed, modelVersion`; empty scoop → `""`, `-1`, `-1`, `""`, `""`, `false`, `"{}"`, `true`, `0`, `""`.
-**Horizons:** `COMMAND='499'`, `CENTER='500@399'`, `QUANTITIES='20,21'`.
+**Reducers you call:** `start_run, end_run, upsert_mission, upsert_task, insert_pose, insert_telemetry, upsert_rover_status, upsert_candidate, mark_visited, add_analysis, log_event` (arg order in 02 §6). `add_analysis` maps `assay` fields → `assayType, a595, concentration, units, verdict, inLinearRange, standardCurveParams=json.dumps(...), simulated, seed, modelVersion`; empty scoop → `""`, `-1`, `-1`, `""`, `""`, `false`, `"{}"`, `true`, `0`, `""`.

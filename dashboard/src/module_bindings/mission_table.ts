@@ -17,5 +17,4 @@ export default __t.row({
   paramsJson: __t.string().name("params_json"),
   assumptionsJson: __t.string().name("assumptions_json"),
   status: __t.string(),
-  deliverAtUnix: __t.f64().name("deliver_at_unix"),
 });
