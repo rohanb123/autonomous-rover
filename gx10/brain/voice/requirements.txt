@@ -1,0 +1,3 @@
+# P4. Loaded inside the brain process. UNVERIFIED: ARM64/CUDA wheel (docs/05 U-15); CPU int8 fallback.
+faster-whisper>=1.0
+httpx>=0.27

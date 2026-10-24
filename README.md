@@ -77,10 +77,10 @@ flowchart LR
 
 | Who | Role | Owns |
 |---|---|---|
-| **P1** | Hardware (pure HW) | Chassis, motors, power, wiring harness, scoop mechanism, camera mast, IMU mount, ArUco markers, overhead camera stand, test arena, sample rocks → [P1](docs/roles/P1-hardware.md) |
+| **P1** | Hardware (pure HW) | Chassis, motors, power, wiring harness, scoop mechanism, camera mast, IMU mount, ArUco markers, overhead camera stand, test arena, sample rocks, arena photo labels → [P1](docs/roles/P1-hardware.md) |
 | **P2** | Rover runtime (hybrid) | Everything that runs on the Pi: motors, servos, IMU, camera, motion primitives, heading/VO, station capture, BEV local map, rock proposals, local store, uploader, safety; calibration; `gx10/overhead/` → [P2](docs/roles/P2-rover-runtime.md) |
-| **P3** | Perception & AI (hybrid) | `ml/` training on space data, `gx10/vision/` (scoring + analyze), voice ASR/NLU, `gx10/mapper/` (ingest + global fusion), dashboard **map layer** `dashboard/src/map/`, the **simulated Bradford assay** end to end (`gx10/vision/bradford_sim.py` + `dashboard/src/assay/`) → [P3](docs/roles/P3-perception-ai.md) |
-| **P4** | Brain & data lead (SW/backend) | Contracts, `shared/`, `gx10/brain/` (FSM, planner, heap, delay, rover link), `spacetimedb/` module, dashboard app shell and all panels except map and assay, integration, scripts → [P4](docs/roles/P4-brain-data.md) |
+| **P3** | Perception & AI (hybrid) | `ml/` training on space data, `gx10/vision/` (scoring + analyze), `gx10/mapper/` (ingest + global fusion), dashboard **map layer** `dashboard/src/map/`, the **simulated Bradford assay** end to end (`gx10/vision/bradford_sim.py` + `dashboard/src/assay/`) → [P3](docs/roles/P3-perception-ai.md) |
+| **P4** | Brain & data lead (SW/backend) | Contracts, `shared/`, `gx10/brain/` (FSM, planner, heap, delay, rover link, voice ASR/NLU), `spacetimedb/` module, dashboard app shell and all panels except map and assay, integration, scripts → [P4](docs/roles/P4-brain-data.md) |
 
 ## Quickstart (once code exists)
 
@@ -92,7 +92,7 @@ spacetime start --listen-addr 0.0.0.0:3000                     # foreground; sep
 ./scripts/gen_bindings.sh                                      # TS bindings → dashboard/src/module_bindings
 ./scripts/dev_up.sh                                            # brain:8000 vision:8100 mapper:8200 overhead:8300
 # Pi (192.168.50.20)
-cd rover && python -m rover.main --config rover/calib/calib.yaml
+cd rover && python -m rover.main --config calib/calib.yaml
 # Laptop
 cd dashboard && npm install && npm run dev                     # http://localhost:5173
 ```
@@ -112,6 +112,7 @@ Without hardware, `python mocks/fake_rover.py` stands in for the Pi. See [docs/0
 | [docs/05-unknowns-and-risks.md](docs/05-unknowns-and-risks.md) | Unknowns (how and when to resolve) and risk register |
 | [docs/06-dashboard.md](docs/06-dashboard.md) | Dashboard: stack, layout, components, data bindings, owners, tests |
 | [docs/sources.md](docs/sources.md) | Every external source we relied on |
+| [docs/TEAM.md](docs/TEAM.md) | Who is P1–P4, and the kickoff prompt each person gives their coding agent |
 | [docs/roles/](docs/roles/) | One self-contained brief per person |
 
 *Planned with Grok Bot; built with Cursor.*

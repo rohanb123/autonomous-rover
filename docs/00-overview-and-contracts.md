@@ -37,20 +37,29 @@ Every state change is written to SpacetimeDB. The dashboard reads **only** Space
 ares-scout/
 ├── README.md                      P4
 ├── AGENTS.md                      P4
+├── CLAUDE.md                      P4  (imports AGENTS.md for Claude Code)
 ├── Makefile                       P4  (make test / make lint / make up)
-├── docs/                          P4 (00, 02, 04, 05, 06, sources); P1 (01); P3 (03); each Pn owns roles/Pn-*.md
+├── pyproject.toml                 P4  (ruff/black/pytest config only)
+├── requirements-dev.txt           P4  (pytest, ruff, black)
+├── .gitignore .editorconfig       P4
+├── .python-version .nvmrc         P4  (3.11, Node 20)
+├── docs/                          P4 (00, 02, 04, 05, 06, sources, TEAM.md); P1 (01); P3 (03); each Pn owns roles/Pn-*.md
 │   └── requests/                  anyone (cross-owner change requests)
-├── config/                        P4
+├── config/                        P4 except models.yaml
 │   ├── network.yaml               IPs, ports (mirror of §3)
 │   ├── run.yaml                   scoring weights, radii, k defaults (mirror of §8)
-│   └── .env.example               STDB_URL, STDB_DB, STDB_TOKEN (real .env gitignored)
-├── shared/py/marsrover_shared/    P4  (pip install -e shared/py on Pi + GX10)
-│   ├── version.py                 CONTRACT_VERSION
-│   ├── schemas.py                 pydantic models for EVERY message in §6
-│   ├── ids.py                     id generators (r_/m_/s_/k_/p_/c_/t_/v_/a_)
-│   ├── frames.py                  wrap_deg(), rover_to_mission(), mission_to_rover()
-│   ├── stdb_http.py               StdbClient: call(reducer, *args), sql(query)
-│   └── eventlog.py                append events.jsonl
+│   ├── models.yaml                P3  embedding model, Ollama caption model, model file paths
+│   └── .env.example               STDB_URL, STDB_DB, STDB_TOKEN_BRAIN/_MAPPER (real .env gitignored)
+├── shared/py/                     P4  (pip install -e shared/py on Pi + GX10)
+│   ├── pyproject.toml
+│   ├── tests/                     test_stdb_http.py, schema round-trips
+│   └── marsrover_shared/
+│       ├── version.py             CONTRACT_VERSION
+│       ├── schemas.py             pydantic models for EVERY message in §6
+│       ├── ids.py                 id generators (r_/m_/s_/k_/p_/c_/t_/v_/a_)
+│       ├── frames.py              wrap_deg(), rover_to_mission(), mission_to_rover()
+│       ├── stdb_http.py           StdbClient: call(reducer, *args), sql(query)
+│       └── eventlog.py            append events.jsonl
 ├── hardware/                      P1
 │   ├── bom.csv                    mirror of docs/01 BOM
 │   ├── wiring/harness.md          as-built wiring photos + deviations
@@ -81,8 +90,9 @@ ares-scout/
 │   │   └── safety.py              heartbeat watchdog, estop latch, tilt cutoff
 │   ├── calib/                     calibrate_motion.py, calibrate_camera.py, calibrate_scoop.py, calib.yaml
 │   └── tests/
-├── gx10/
-│   ├── brain/                     P4 except voice/
+├── gx10/                          no shared files: each service dir has its own requirements.txt (same owner)
+│   ├── brain/                     P4 (including voice/)
+│   │   ├── requirements.txt
 │   │   ├── app.py                 FastAPI :8000 (REST + WS) – dashboard command API
 │   │   ├── fsm.py                 run/mission state machine
 │   │   ├── planner.py             station plan, heap top-k, NN route, replan on skip
@@ -94,10 +104,12 @@ ares-scout/
 │   │   ├── rover_link.py          WS client to Pi, cmd tracking, heartbeat
 │   │   ├── overhead_link.py       subscribes to overhead :8300
 │   │   ├── stdb_writer.py         rate-limited writes (poses, status) via StdbClient
-│   │   └── voice/                 P3
+│   │   └── voice/                 P4  (ASR + NLU)
+│   │       ├── requirements.txt
 │   │       ├── asr.py             audio bytes → text (faster-whisper)
 │   │       └── nlu.py             text → Mission (Ollama JSON mode) + validation
 │   ├── vision/                    P3
+│   │   ├── requirements.txt
 │   │   ├── app.py                 FastAPI :8100 /score /analyze /health
 │   │   ├── embed.py               image → embedding (open_clip/SigLIP)
 │   │   ├── heads.py               logistic-regression heads (visual, category, terrain)
@@ -107,30 +119,34 @@ ares-scout/
 │   │   ├── scoop_check.py         empty-scoop detector (ROI diff)
 │   │   └── bradford_sim.py        SIMULATED Bradford assay (deterministic)
 │   ├── mapper/                    P3
+│   │   ├── requirements.txt
 │   │   ├── app.py                 FastAPI :8200 /ingest/* /fuse/* /files/*
 │   │   ├── store.py               /data/runs/<run>/… layout
 │   │   ├── fuse.py                global mosaic
 │   │   ├── posegraph.py           2D pose graph refinement
 │   │   └── tiles.py               slice → PNG → base64 → upsert_global_tile
 │   └── overhead/                  P2
+│       ├── requirements.txt
 │       ├── app.py                 WS :8300 /pose
 │       └── aruco_tracker.py
 ├── spacetimedb/                   P4  (TypeScript module "marsrover")
 │   ├── package.json  tsconfig.json
 │   └── src/ schema.ts  index.ts
 ├── dashboard/                     P4 except src/map/ and src/assay/
-│   ├── package.json vite.config.ts index.html
+│   ├── package.json vite.config.ts index.html tsconfig.json .env.example
 │   └── src/
 │       ├── main.tsx App.tsx       shell, router (Live | Replay), providers
+│       ├── styles.css vite-env.d.ts  global CSS variables; env typings
 │       ├── stdb/                  connection.ts, hooks.ts (useRun, useRunTables)
 │       ├── api/brain.ts           REST client to brain :8000
 │       ├── module_bindings/       GENERATED (never hand-edit)
 │       ├── panels/                MissionPanel, TaskQueuePanel, KeyframePanel, HealthPanel,
 │       │                          DelayPanel, ConnectionBadge, EStopButton, QuickBar,
 │       │                          VoiceButton, TimelineScrubber, PinDetailDrawer, RunPicker, EventLog
-│       ├── map/                   P3: MapView.tsx, layers/{tiles,trail,pins,exclusion,stations}.ts, camera.ts
-│       └── assay/                 P3: BradfordPanel.tsx, Cuvette.tsx, StandardCurveChart.tsx, format.ts
+│       ├── map/                   P3: MapView.tsx, layers/{tiles,trail,pins,exclusion,stations}.ts, camera.ts, map.css
+│       └── assay/                 P3: BradfordPanel.tsx, Cuvette.tsx, StandardCurveChart.tsx, format.ts, assay.css, assay.test.ts
 ├── ml/                            P3  (data/ and models/ gitignored)
+│   ├── requirements.txt
 │   ├── download/                  get_msl_v21.py, get_ai4mars.py, get_chemcam_obs.py, get_raw_feed.py
 │   ├── chemcam_priors.py          → ml/models/category_priors.json
 │   ├── build_embeddings.py        → ml/models/*.npz
@@ -143,9 +159,18 @@ ares-scout/
 │   ├── fake_mapper.py             P3
 │   ├── fake_brain.py              P4  (scripted run → writes to STDB so dashboard can be built alone)
 │   └── replay_run.py              P4  (re-plays events.jsonl into a fresh STDB db)
-├── scripts/                       P4  dev_up.sh, publish_stdb.sh, gen_bindings.sh, reset_db.sh
+├── scripts/                       P4  _env.sh, dev_up.sh, publish_stdb.sh, gen_bindings.sh, reset_db.sh
 └── data/                          gitignored; runtime (GX10 /data symlink)
 ```
+
+**Seams where two owners meet.** Each one has exactly one rule:
+- **Contract copies in role docs.** Each Pn owns `roles/Pn-*.md`, **except** its final "contract copies" section. Whoever changes a contract updates those copies (AGENTS.md §3, step 3).
+- **Python deps.** Each service dir has its own `requirements.txt`, owned by that dir's owner. There's no shared GX10 dependency file.
+- **Dashboard deps and styles.** `dashboard/package.json` and `src/styles.css` are P4's. P3 components only *read* the CSS variables, and keep their own styles in `map/map.css` / `assay/assay.css`. If P3 needs an npm dep, they request it in `docs/requests/` (doc 06 aims for no extra deps).
+- **Dashboard ↔ map/assay.** `MapViewProps` and `BradfordPanelProps` (doc 06 §4) are the whole interface. P4 renders the components and passes rows; P3 never opens an STDB connection.
+- **Model config.** `config/models.yaml` (vision/ML models) is P3's, and the only P3 file in `config/`. Voice settings (ASR size, NLU model) live in `config/run.yaml` (P4).
+- **Arena photos.** P1 captures and labels them into `ml/data/arena/`. That's gitignored data, not repo files, in the layout docs/03 defines. P3 owns `arena_fewshot.py`, which consumes them.
+- **Runtime `data/`.** The mapper (P3) owns the `data/runs/<run>/` layout. `eventlog.py` (P4) only appends `events.jsonl` in it. The brain (P4) owns `data/horizons_cache.json`.
 
 ## 3. Network and ports
 
@@ -386,7 +411,7 @@ stateDiagram-v2
 
 ## 9. Mars delay
 - One-way light time (OWLT) from JPL Horizons: `COMMAND='499'`, `CENTER='500@399'`, `QUANTITIES='20,21'` (col 21 = 1-way down light time, minutes). Verified 2026-10-23: 2026-10-24 00:00 UT → 12.444 min, Δ = 1.496 AU.
-- Cached in `data/horizons_cache.json` (fetch at H0 with internet; venue may be offline).
+- Cached in `data/horizons_cache.json` (fetch at setup while there's internet; venue may be offline).
 - `effective_delay_s = OWLT_s / compression`. Compression slider 1–1000 (log). Default 74.7 ≈ 10 s.
 - Applies to dashboard→brain commands (uplink) **and** to what the dashboard shows as "received" (downlink): rows carry `t_unix`; the dashboard in Mars mode renders state as of `now − effective_delay_s`. **E-STOP and `stop` are never delayed.**
 

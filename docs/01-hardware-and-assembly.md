@@ -2,7 +2,7 @@
 
 **Owner: P1.** P2 owns pin *assignments in code* (they must match §4 here). Changes go through [AGENTS.md §3](../AGENTS.md#3-changing-a-contract).
 
-> **Prices**: only prices verified on the vendor page on 2026-10-23 are listed. "—" means no sourced price; don't guess. Kit items whose exact model we don't know yet are marked ⚠️ UNVERIFIED and are resolved at H0 (see [05 U-1…U-8](05-unknowns-and-risks.md#unknowns)).
+> **Prices**: only prices verified on the vendor page on 2026-10-23 are listed. "—" means no sourced price; don't guess. Kit items whose exact model we don't know yet are marked ⚠️ UNVERIFIED and are resolved first (see [05 U-1…U-8](05-unknowns-and-risks.md#unknowns)).
 
 ## 1. Look-around decision
 <a id="look-around-decision"></a>
@@ -116,7 +116,7 @@ flowchart TB
 | 3V3 | — | 1 | PCA9685 VCC, IMU VCC, ADS VCC, TB6612 VCC | Logic only |
 | GND | — | 6/9/14… | **Star ground** point | |
 
-**I2C addresses:** PCA9685 `0x40`, ADS1115 `0x48`, MPU-6050 `0x68` (a kit ADXL345 would be `0x53`, which is accel only ⚠️). Check with `i2cdetect -y 1` at H1.
+**I2C addresses:** PCA9685 `0x40`, ADS1115 `0x48`, MPU-6050 `0x68` (a kit ADXL345 would be `0x53`, which is accel only ⚠️). Check with `i2cdetect -y 1` during inventory.
 
 **PCA9685 channels:** ch0 shoulder, ch1 wrist, ch2–3 spare (spare SG92R pre-mounted on horns for a fast swap). V+ = servo pack (+4700 µF). **Never** power servos from the Pi 5 V pin.
 
@@ -181,15 +181,15 @@ Real µs values per pose are set by P2's `calibrate_scoop.py` and stored in `cal
 Payload + scoop + wrist servo ≈ 40 g (estimate) at r ≈ 12 cm → τ ≈ 0.040 × 9.81 × 0.12 ≈ **0.047 N·m ≈ 0.48 kg·cm** at the shoulder. Compare against the **real servo's datasheet stall torque** with a ≥2× margin. If the margin is short: shorten L1, use a lighter scoop, add a rubber-band counterbalance, or move the wrist servo closer to the shoulder.
 
 ## 7. Assembly (P1 order, with checkpoints)
-1. **Inventory (H0–H1).** Photograph every kit part, read markings, fill U-1…U-8 in [05](05-unknowns-and-risks.md). Decide IMU/servo purchases.
-2. **Chassis (H1–H3).** Build the chassis, mount motors, wheels. Mark the rover center dot. ✅ *CP1: wheels spin free, frame square.*
-3. **Power (H2–H4).** Mount both AA packs + kill switch + star ground terminal. Fit the caps. ✅ *CP2: multimeter shows motor VM and servo V+ in range, kill switch kills both, Pi on its own bank.*
-4. **Drive harness (H3–H5).** TB6612 per §4. Hand off to P2 for `motors.py` bring-up. ✅ *CP3: P2 drives both wheels both ways; STBY low stops them.*
-5. **I2C deck (H4–H6).** PCA9685, IMU (flat, centered, arrow = +x forward), optional ADS1115. ✅ *CP4: `i2cdetect -y 1` shows 0x40, 0x68 (and 0x48).*
-6. **Mast + camera (H5–H7).** Rigid mast rear-center, camera 30–35° down; **no wobble** (re-glue if it moves). ✅ *CP5: camera sees ground from ~10 cm ahead of the scoop lip to ≥1.5 m.*
-7. **Scoop (H6–H12).** Cut the arm, mount the shoulder servo at the front-left, wrist + bucket, center the servos at 1500 µs before attaching horns. Optional pot on the shoulder axis. ✅ *CP6: hand-cycled all five poses, no collisions with the chassis or camera FOV in STOW.*
-8. **Overhead + arena (H8–H14).** Stand at ≥1.6 m, markers 1–4 in the arena corners (measure positions in mission frame), rover marker 0 on top. Tape home pad + arrow. Lay out rocks + pebbles. ✅ *CP7: the overhead camera sees all 5 markers.*
-9. **Hardening (H14–H24).** Strain-relieve cables, zip-tie, label every wire with its §4 signal name, spare servos ready. ✅ *CP8: 10 survey stations + 3 scoops in a row with no brownout or loose wire.*
+1. **Inventory.** Photograph every kit part, read markings, fill U-1…U-8 in [05](05-unknowns-and-risks.md). Decide IMU/servo purchases.
+2. **Chassis.** Build the chassis, mount motors, wheels. Mark the rover center dot. ✅ *CP1: wheels spin free, frame square.*
+3. **Power.** Mount both AA packs + kill switch + star ground terminal. Fit the caps. ✅ *CP2: multimeter shows motor VM and servo V+ in range, kill switch kills both, Pi on its own bank.*
+4. **Drive harness.** TB6612 per §4. Hand off to P2 for `motors.py` bring-up. ✅ *CP3: P2 drives both wheels both ways; STBY low stops them.*
+5. **I2C deck.** PCA9685, IMU (flat, centered, arrow = +x forward), optional ADS1115. ✅ *CP4: `i2cdetect -y 1` shows 0x40, 0x68 (and 0x48).*
+6. **Mast + camera.** Rigid mast rear-center, camera 30–35° down; **no wobble** (re-glue if it moves). ✅ *CP5: camera sees ground from ~10 cm ahead of the scoop lip to ≥1.5 m.*
+7. **Scoop.** Cut the arm, mount the shoulder servo at the front-left, wrist + bucket, center the servos at 1500 µs before attaching horns. Optional pot on the shoulder axis. ✅ *CP6: hand-cycled all five poses, no collisions with the chassis or camera FOV in STOW.*
+8. **Overhead + arena.** Stand at ≥1.6 m, markers 1–4 in the arena corners (measure positions in mission frame), rover marker 0 on top. Tape home pad + arrow. Lay out rocks + pebbles. ✅ *CP7: the overhead camera sees all 5 markers.*
+9. **Hardening.** Strain-relieve cables, zip-tie, label every wire with its §4 signal name, spare servos ready. ✅ *CP8: 10 survey stations + 3 scoops in a row with no brownout or loose wire.*
 10. **Pre-flight checklist** in `hardware/checklists/preflight.md` (batteries charged, kill switch, markers, SD space).
 
 ## 8. Watch-outs

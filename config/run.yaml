@@ -56,3 +56,8 @@ mars_delay:
   compression_range: [1, 1000]
   compression_default: 74.7  # ≈ 10 s effective delay
   never_delayed: [estop, stop]
+
+voice:                     # P4 (gx10/brain/voice/)
+  asr_faster_whisper_size: small   # small/base, en; CPU int8 fallback
+  asr_language: en
+  nlu_ollama_model: ""     # UNVERIFIED: small instruct model with JSON mode; pull before the venue

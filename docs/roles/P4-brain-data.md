@@ -6,14 +6,14 @@ Own the **decision loop** and the **single source of truth**: the brain service 
 ## 2. Scope
 | Yours | Not yours |
 |---|---|
-| `gx10/brain/**` except `voice/` | Voice ASR/NLU (P3): you call `transcribe()` and `parse_mission()` |
-| `spacetimedb/**` (schema + reducers), `scripts/**`, `config/**`, `shared/py/**`, `Makefile` | Map canvas + layers, BradfordPanel (P3); you pass them rows as props |
+| `gx10/brain/**`, including `voice/` (ASR + NLU) | Vision/ML models and `config/models.yaml` (P3) |
+| `spacetimedb/**` (schema + reducers), `scripts/**`, `config/**` except `models.yaml` (P3), `shared/py/**`, `Makefile` and root tooling files | Map canvas + layers, BradfordPanel (P3); you pass them rows as props |
 | `dashboard/**` except `src/map/` and `src/assay/` | Rover primitives (P2), scoring components (P3) |
 | `mocks/fake_brain.py`, `mocks/replay_run.py` | Hardware (P1) |
-| README, AGENTS, docs 00/02/04/05/06/sources | docs 01 (P1), 03 (P3), other role files |
+| README, AGENTS, CLAUDE.md, docs 00/02/04/05/06/sources/TEAM | docs 01 (P1), 03 (P3), other role files |
 
 ## 3. Hardware / environment
-GX10 at 192.168.50.10 (Ethernet), travel router `marsnet`, dashboard laptop .30. SpacetimeDB **v2.13.0 standalone** (ARM64 build exists) on :3000; Node 20+ for the module and dashboard; Python 3.11+ (`fastapi`, `uvicorn`, `websockets`, `httpx`, `pydantic` v2, `numpy`). No physical parts.
+GX10 at 192.168.50.10 (Ethernet), travel router `marsnet`, dashboard laptop .30. SpacetimeDB **v2.13.0 standalone** (ARM64 build exists) on :3000; Node 20+ for the module and dashboard; Python 3.11+ (`fastapi`, `uvicorn`, `websockets`, `httpx`, `pydantic` v2, `numpy`, `faster-whisper` ⚠️ ARM64/CUDA wheel, CPU `int8` fallback). No physical parts.
 
 ## 4. Files and function signatures
 ```python
@@ -23,6 +23,13 @@ ids.py:      def new_run_id(now: datetime) -> str; class IdGen: def next(self, p
 frames.py:   def wrap_deg(a: float) -> float; def rover_to_mission(pose: Pose, xy_r) -> tuple; def mission_to_rover(pose: Pose, xy_m) -> tuple
 stdb_http.py: class StdbClient; class RateLimitedWriter   (02 §8)
 eventlog.py: def log(run_id: str, src: str, level: str, kind: str, msg: str, data: dict | None = None) -> None   # data/runs/<run>/events.jsonl
+
+# gx10/brain/voice/asr.py
+def transcribe(audio: bytes, mime: str = "audio/webm") -> str        # ffmpeg → 16 kHz wav → faster-whisper (small/base, en)
+
+# gx10/brain/voice/nlu.py
+def parse_mission(text: str, run_id: str, defaults: dict) -> dict     # → Mission (00 §6.1) + assumptions; Ollama JSON mode; regex fallback
+def parse_quick(text: str) -> str | None                              # "stop"/"pause"/… if the utterance is a quick command
 
 # gx10/brain/scoring.py
 def final_score(c: dict, mission: Mission, priors: dict[str, float], pose: Pose) -> tuple[float, dict]   # (score, components)
@@ -89,17 +96,17 @@ TypeScript: `spacetimedb/src/schema.ts`, `index.ts` (02 §5–6); `dashboard/src
 - Every transition: `log_event` + events.jsonl. Every 0.5 s: `upsert_rover_status`.
 
 ## 6. Mars delay
-`DelayQueue` holds commands until `deliver_at = now + effective_delay_s` (Mars) or now (Earth). `stop` and E-STOP use `bypass=True`. `effective_delay_s = OWLT / compression`; OWLT from Horizons (cached at H0: 2026-10-24 00:00 UT → 12.444 min). Default compression 74.7 → ~10 s. Write `set_delay_config` on every change.
+`DelayQueue` holds commands until `deliver_at = now + effective_delay_s` (Mars) or now (Earth). `stop` and E-STOP use `bypass=True`. `effective_delay_s = OWLT / compression`; OWLT from Horizons (cached at setup: 2026-10-24 00:00 UT → 12.444 min). Default compression 74.7 → ~10 s. Write `set_delay_config` on every change.
 
 ## 7. Build order, checkpoints, acceptance
-| When | Build | ✅ Checkpoint |
+| Done by | Build | ✅ Checkpoint |
 |---|---|---|
-| H0–H2 | Repo skeleton (tree from 00 §2), `shared/py` schemas + tests, router + IPs, STDB install + module v0 (run, pose, rover_status, event) + `claim_writer`, `fake_brain.py` | **I0 (H2):** STDB HTTP positional-arg call works (`insert_pose` via `StdbClient`) **[resolves U-11]**; dashboard skeleton shows a pose from fake_brain; brain connects to fake_rover |
-| H2–H8 | All 15 tables + reducers + bindings; brain app, RoverLink, FSM skeleton (SURVEY only), BrainDb; dashboard shell + ConnectionBadge + EStop + QuickBar + MissionPanel (text) | **I1 (H8):** text mission → fake_rover station → candidates in STDB → TaskQueuePanel |
-| H8–H14 | scoring, dedupe, TopK, nn_route, visited; INVESTIGATE with fake_rover/fake_vision; Horizons + DelayQueue + DelayPanel; overhead_link | **I2 (H14):** full campaign on mocks with Mars delay; E-STOP immediate (06 D4) |
-| H14–H20 | Real rover integration with P2; remaining panels; TimelineScrubber + PinDetailDrawer; replay_run | **I3 (H20):** real rover runs a mission end to end; replay works |
-| H20–H24 | Voice wiring (P3's functions); suggest mode; failure paths (empty scoop, unreachable, link loss) | **I4 (H24):** voice mission; 3 sampled pins with Bradford panel in replay |
-| H24–H28 | Soak tests (3 consecutive runs), `reset_db.sh`, docs updated to as-built | **I5 freeze (H28)** |
+| by I0 | Repo skeleton (tree from 00 §2), `shared/py` schemas + tests, router + IPs, STDB install + module v0 (run, pose, rover_status, event) + `claim_writer`, `fake_brain.py` | **I0:** STDB HTTP positional-arg call works (`insert_pose` via `StdbClient`) **[resolves U-11]**; dashboard skeleton shows a pose from fake_brain; brain connects to fake_rover |
+| by I1 | All 15 tables + reducers + bindings; brain app, RoverLink, FSM skeleton (SURVEY only), BrainDb; dashboard shell + ConnectionBadge + EStop + QuickBar + MissionPanel (text) | **I1:** text mission → fake_rover station → candidates in STDB → TaskQueuePanel |
+| by I2 | scoring, dedupe, TopK, nn_route, visited; INVESTIGATE with fake_rover/fake_vision; Horizons + DelayQueue + DelayPanel; overhead_link | **I2:** full campaign on mocks with Mars delay; E-STOP immediate (06 D4) |
+| by I3 | Real rover integration with P2; remaining panels; TimelineScrubber + PinDetailDrawer; replay_run | **I3:** real rover runs a mission end to end; replay works |
+| by I4 | Voice: test `faster-whisper` + the Ollama NLU model on the GX10 (U-15), asr + nlu with 10 test utterances (8/10 parse to the expected Mission), wiring; suggest mode; failure paths (empty scoop, unreachable, link loss) | **I4:** voice mission; 3 sampled pins with Bradford panel in replay |
+| by I5 | Soak tests (3 consecutive runs), `reset_db.sh`, docs updated to as-built | **I5 freeze** |
 
 **Acceptance:** 02 §12 (STDB 1–6), 06 D1–D6, plus brain unit tests: `test_scoring.py` (golden numbers from 00 §8), `test_topk.py` (heap keeps the k best under random insert order), `test_dedupe.py`, `test_visited.py`, `test_route.py`, `test_delay.py` (stop/estop bypass; others wait `effective_delay_s ± 0.1 s`), `test_fsm.py` (scripted fake_rover run reaches DONE; estop from every state → ESTOP).
 
@@ -110,6 +117,7 @@ TypeScript: `spacetimedb/src/schema.ts`, `index.ts` (02 §5–6); `dashboard/src
 ## 9. Watch-outs
 - **Never block the control loop on STDB** (queue + rate limit; events.jsonl backup).
 - E-STOP path: dashboard → `/api/estop` → `RoverLink.estop()` directly, no DelayQueue, no FSM lock. Test it every milestone.
+- Ollama JSON can still be invalid → validate with pydantic, fall back to the regex parser, and list assumptions.
 - Heartbeats must keep flowing while the FSM awaits long ops, or the Pi stops mid-drive.
 - After every schema change: republish (`--delete-data=always` in dev), rerun `claim_writer`/`add_writer`, regenerate bindings.
 - Rank updates can flood `upsert_candidate`; only write rows whose rank/status changed.

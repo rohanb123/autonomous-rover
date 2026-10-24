@@ -1,0 +1,11 @@
+# P3. PyTorch is preinstalled on DGX OS; don't pin it. UNVERIFIED: open_clip_torch on ARM64 (docs/05 U-15).
+fastapi>=0.110
+uvicorn>=0.29
+httpx>=0.27
+numpy>=1.26
+pillow>=10
+opencv-python-headless>=4.9
+open_clip_torch>=2.24
+scikit-learn>=1.4
+joblib>=1.3
+pyyaml>=6

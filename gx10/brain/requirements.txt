@@ -1,0 +1,8 @@
+# P4. Install: pip install -e shared/py -r gx10/brain/requirements.txt
+fastapi>=0.110
+uvicorn>=0.29
+websockets>=12
+httpx>=0.27
+numpy>=1.26
+pyyaml>=6
+python-multipart>=0.0.9

@@ -17,7 +17,7 @@ Everything that runs **on the Pi**: turn brain commands into safe motion, scoop 
 
 ## 3. Hardware you drive
 TB6612 (GPIO 12/5/6 left, 13/20/21 right, STBY 26) · PCA9685 @0x40 (ch0 shoulder, ch1 wrist) · IMU @0x68 (MPU-6050, or kit IMU ⚠️) · ADS1115 @0x48 optional (pot on A0) · LED BCM22 · nav webcam (USB, fixed, 30–35° down) · overhead webcam (USB on the GX10).
-**Libraries:** `gpiozero` with the `lgpio` pin factory (Pi 5 has no pigpio support: [pigpio#589](https://github.com/joan2937/pigpio/issues/589)), `adafruit-circuitpython-pca9685` (or `smbus2` direct) ⚠️ pick at H2, `opencv-python-headless` (with `cv2.aruco` ⚠️ check the build includes contrib/aruco on the Pi), `websockets`, `fastapi`/`uvicorn` for :8080, `httpx` for uploads, `pydantic` v2 via `marsrover_shared`.
+**Libraries:** `gpiozero` with the `lgpio` pin factory (Pi 5 has no pigpio support: [pigpio#589](https://github.com/joan2937/pigpio/issues/589)), `adafruit-circuitpython-pca9685` (or `smbus2` direct) ⚠️ pick by I0, `opencv-python-headless` (with `cv2.aruco` ⚠️ check the build includes contrib/aruco on the Pi), `websockets`, `fastapi`/`uvicorn` for :8080, `httpx` for uploads, `pydantic` v2 via `marsrover_shared`.
 
 ## 4. Files and function signatures
 ```python
@@ -140,20 +140,20 @@ class ArucoTracker:
 - `calibrate_scoop.py`: interactive µs jog per pose → `scoop_us`; place a pebble where the scoop lip lands in DEPLOY → record its pixel box as `scoop_zone_px`; PRESENT → record `present_roi_px`.
 
 ## 7. Build order, checkpoints, acceptance
-| When | Build | ✅ Checkpoint / acceptance |
+| Done by | Build | ✅ Checkpoint / acceptance |
 |---|---|---|
-| H0–H2 | Flash Pi OS, Wi-Fi to marsnet, static .20, `pip install -e shared/py`, `mocks/fake_rover.py` (speaks the full WS protocol with canned images) | **I0 (H2):** P4's brain connects to fake_rover and to the real Pi WS stub; heartbeat flows |
-| H2–H6 | motors, servos, imu, camera, safety, ws_server | `drive 0.3` and `turn 90` work from a WS client; watchdog stops the motors when you kill the client mid-drive |
-| H6–H10 | calibration, pose, heading (gyro), snapshot server | 360° turn error < 10° (gyro) / < 20° (timed); 1 m drive < 5 cm drift |
-| H8–H14 | station, bev, proposals, local_store, uploader | **I1/I2:** a `station` produces 8 keyframes + BEV + proposals on the SD card and in the mapper's `/data/runs/…` (P3) within 60 s |
-| H12–H18 | approach, scoop sequence, overhead tracker | Approach puts the pebble in the scoop zone ≥ 8/10; scoop pick ≥ 7/10 (with P1) |
-| H18–H24 | VO fusion, robustness: reconnect, camera re-open, upload retry | **I3/I4:** full mission end to end with the brain; unplugging Wi-Fi for 10 s → motors stop, then the run resumes after reconnect |
-| H24–H28 | Bug fixes only, tune thresholds | **I5 freeze** |
+| by I0 | Flash Pi OS, Wi-Fi to marsnet, static .20, `pip install -e shared/py`, `mocks/fake_rover.py` (speaks the full WS protocol with canned images) | **I0:** P4's brain connects to fake_rover and to the real Pi WS stub; heartbeat flows |
+| by I1 | motors, servos, imu, camera, safety, ws_server | `drive 0.3` and `turn 90` work from a WS client; watchdog stops the motors when you kill the client mid-drive |
+| by I2 | calibration, pose, heading (gyro), snapshot server | 360° turn error < 10° (gyro) / < 20° (timed); 1 m drive < 5 cm drift |
+| by I2 | station, bev, proposals, local_store, uploader | **I1/I2:** a `station` produces 8 keyframes + BEV + proposals on the SD card and in the mapper's `/data/runs/…` (P3) within 60 s |
+| by I3 | approach, scoop sequence, overhead tracker | Approach puts the pebble in the scoop zone ≥ 8/10; scoop pick ≥ 7/10 (with P1) |
+| by I4 | VO fusion, robustness: reconnect, camera re-open, upload retry | **I3/I4:** full mission end to end with the brain; unplugging Wi-Fi for 10 s → motors stop, then the run resumes after reconnect |
+| by I5 | Bug fixes only, tune thresholds | **I5 freeze** |
 
 Unit tests in `rover/tests/`: `test_bev.py` (pixel→xy on a synthetic homography), `test_proposals.py` (finds 3 dark blobs on a synthetic image), `test_safety.py` (watchdog timing with a fake clock), `test_protocol.py` (every op round-trips through pydantic).
 
 ## 8. Mocks
-- **You provide** `mocks/fake_rover.py`: same WS protocol and timing (station ≈ 5 s), poses moving as commanded, canned station bundles from `mocks/data/stations/` uploaded to the real mapper (or fake_mapper), and `scoop` returning a canned `present.jpg`. P4 and P3 build against it from H2.
+- **You provide** `mocks/fake_rover.py`: same WS protocol and timing (station ≈ 5 s), poses moving as commanded, canned station bundles from `mocks/data/stations/` uploaded to the real mapper (or fake_mapper), and `scoop` returning a canned `present.jpg`. P4 and P3 build against it from I0.
 - **You use** `mocks/fake_mapper.py` (P3) until the real mapper is up.
 
 ## 9. Watch-outs

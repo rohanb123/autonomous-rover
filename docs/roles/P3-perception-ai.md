@@ -1,26 +1,25 @@
-# P3: Perception & AI (hybrid: ML, vision, voice, mapper, map view, simulated assay)
+# P3: Perception & AI (hybrid: ML, vision, mapper, map view, simulated assay)
 
 ## 1. Goal
 Make the rover **choose like a scientist** and make the result **visible**:
 - the models and priors that score rocks (`ml/`, vision `/score`);
 - the placeholder "analysis" of a scooped sample plus the **simulated Bradford assay** (`/analyze`);
-- voice → mission JSON (`brain/voice/`);
 - the mapper that stores station bundles, publishes local tiles and fuses the **global map** (`mapper/`);
 - the dashboard **MapView** and **BradfordPanel**.
 
-> ⚠️ This is the heaviest role. The cut list in [05](../05-unknowns-and-risks.md#risk-register) says what to drop first. Ask P4 for help on the mapper's HTTP plumbing if you fall behind at I2.
+> ⚠️ Still the heaviest role (voice moved to P4, arena photos to P1). The cut list in [05](../05-unknowns-and-risks.md#risk-register) says what to drop first. If you're behind at I2, P4 takes over `dashboard/src/assay/` as a whole directory.
 
 ## 2. Scope
 | Yours | Not yours |
 |---|---|
-| `ml/**`, `gx10/vision/**`, `gx10/mapper/**`, `gx10/brain/voice/**` | Final score formula, heap, route, dedupe, exclusion (brain, P4). You return *components* |
+| `ml/**`, `gx10/vision/**`, `gx10/mapper/**` | Final score formula, heap, route, dedupe, exclusion (brain, P4). You return *components* |
 | `dashboard/src/map/**`, `dashboard/src/assay/**` | Dashboard shell, panels, STDB connection (P4). You get rows via props |
 | `mocks/fake_vision.py`, `mocks/fake_mapper.py` | Rock proposals on the Pi (P2). You score them |
-| Ollama model choice (:11434), arena few-shot photo session | DB schema/reducers (P4). You call `upsert_keyframe`, `upsert_local_tile`, `upsert_global_tile`, `set_run_fused`, `log_event` from the mapper |
+| Ollama caption-model choice (:11434), recorded in `config/models.yaml`; the arena label layout in docs/03 (P1 captures and labels the photos) | DB schema/reducers (P4). You call `upsert_keyframe`, `upsert_local_tile`, `upsert_global_tile`, `set_run_fused`, `log_event` from the mapper |
 | docs/03 | |
 
 ## 3. Hardware / environment
-GX10 (ARM64, NVIDIA GB10, DGX OS, PyTorch preinstalled per the ASUS spec). Python 3.11+ venv with `open_clip_torch` ⚠️ (test at H1), `scikit-learn`, `pandas`, `fastapi`, `uvicorn`, `pillow`, `opencv-python-headless`, `numpy`, `faster-whisper` ⚠️ (ARM64/CUDA wheel: test at H1; CPU `int8` fallback), `httpx`. Ollama on :11434 with a small instruct model that supports JSON output ⚠️ pull before the venue. No extra parts.
+GX10 (ARM64, NVIDIA GB10, DGX OS, PyTorch preinstalled per the ASUS spec). Python 3.11+ venv with `open_clip_torch` ⚠️ (test before I0), `scikit-learn`, `pandas`, `fastapi`, `uvicorn`, `pillow`, `opencv-python-headless`, `numpy`, `httpx`. Ollama on :11434 with an optional caption VLM ⚠️ pull before the venue (template captions otherwise). No extra parts.
 
 ## 4. Files and function signatures
 ```python
@@ -84,12 +83,6 @@ POST /ingest/sample    multipart (00 §6.5) → {ok, url}
 POST /fuse/{run_id}    → runs fuse_run, upsert_global_tile ×N, set_run_fused(run_id, true); returns {ok, tiles}
 GET  /files/{path}     static files under /data
 
-# gx10/brain/voice/asr.py
-def transcribe(audio: bytes, mime: str = "audio/webm") -> str        # ffmpeg → 16 kHz wav → faster-whisper (small/base, en)
-
-# gx10/brain/voice/nlu.py
-def parse_mission(text: str, run_id: str, defaults: dict) -> dict     # → Mission (00 §6.1) + assumptions; Ollama JSON mode; regex fallback
-def parse_quick(text: str) -> str | None                              # "stop"/"pause"/… if the utterance is a quick command
 ```
 TypeScript (props in [06 §4](../06-dashboard.md#4-repo-layout)): `map/MapView.tsx`, `map/camera.ts` (`worldToScreen`, `screenToWorld`, `fitBounds`), `map/layers/*.ts` (`draw(ctx, cam, rows)`), `assay/BradfordPanel.tsx`, `assay/Cuvette.tsx`, `assay/StandardCurveChart.tsx`, `assay/format.ts` (`fmtConc`, `fmtA595`, `verdictLabel`, `a595ToColor`).
 
@@ -211,23 +204,22 @@ def simulate(sample_id: str, run_id: str = "", interest_score: float | None = No
 **Dashboard panel:** see [06 §7](../06-dashboard.md#bradford-panel). It renders the stored row; it never re-simulates.
 
 ## 8. Build order, checkpoints, acceptance
-| When | Build | ✅ Checkpoint |
+| Done by | Build | ✅ Checkpoint |
 |---|---|---|
-| H0–H2 | Start AI4Mars subset + MSL v2.1 + ChemCam downloads; venv; `fake_vision.py`, `fake_mapper.py` (same contracts, canned answers, writes to STDB) | **I0:** P4's brain gets canned `/score` and `/analyze`; P2's uploader hits fake_mapper |
-| H1–H4 | Test `open_clip` + `faster-whisper` + Ollama on the GX10 (ARM64) | Each prints a result, or the fallback is chosen and noted in 05 |
-| H2–H8 | `bradford_sim.py` + tests (golden vector); mapper `/ingest/*` + thumbnails + local tiles to STDB | **I1 (H8):** a fake_rover station appears in STDB `local_map_tile` + `keyframe`; golden test green |
-| H4–H10 | chemcam_priors, embeddings, heads, `/score`, `/analyze` (template caption) | **I2 (H14):** real `/score` < 300 ms / 10 crops; metrics.json written |
-| H8–H14 | MapView (tiles, trail, pins, exclusion, stations) against fake_brain | Live map renders the fake_brain run (06 D2, D10) |
-| H10–H16 | voice: asr + nlu with 10 test utterances | 8/10 parse to the expected Mission; quick commands recognized |
-| H12–H18 | Arena photo session (50–100 crops via P2's station), few-shot, eval | Arena accuracy reported |
-| H14–H22 | `/fuse`: mosaic + global tiles (DR first, then posegraph) | **I3 (H20):** replay shows a fused global map for a real run |
-| H18–H24 | BradfordPanel, Cuvette, StandardCurveChart | **I4 (H24):** 06 D6–D9 pass on a real sampled pin |
-| H24–H28 | VLM captions (optional), polish, bug fixes | **I5 freeze (H28)** |
+| by I0 | Start AI4Mars subset + MSL v2.1 + ChemCam downloads; venv; `fake_vision.py`, `fake_mapper.py` (same contracts, canned answers, writes to STDB) | **I0:** P4's brain gets canned `/score` and `/analyze`; P2's uploader hits fake_mapper |
+| by I1 | Test `open_clip` + Ollama (captions) on the GX10 (ARM64) | Each prints a result, or the fallback is chosen and noted in 05 |
+| by I1 | `bradford_sim.py` + tests (golden vector); mapper `/ingest/*` + thumbnails + local tiles to STDB | **I1:** a fake_rover station appears in STDB `local_map_tile` + `keyframe`; golden test green |
+| by I2 | chemcam_priors, embeddings, heads, `/score`, `/analyze` (template caption) | **I2:** real `/score` < 300 ms / 10 crops; metrics.json written |
+| by I2 | MapView (tiles, trail, pins, exclusion, stations) against fake_brain | Live map renders the fake_brain run (06 D2, D10) |
+| by I3 | Few-shot training + eval on P1's labeled arena photos | Arena accuracy reported |
+| by I4 | `/fuse`: mosaic + global tiles (DR first, then posegraph) | **I3:** replay shows a fused global map for a real run |
+| by I4 | BradfordPanel, Cuvette, StandardCurveChart | **I4:** 06 D6–D9 pass on a real sampled pin |
+| by I5 | VLM captions (optional), polish, bug fixes | **I5 freeze** |
 
 Acceptance summary: doc 03 §5 (models), the Bradford tests above, 06 D2/D5/D7–D10 (your components), and the mapper: a station upload of 8 keyframes + BEV returns in < 1 s and appears in STDB within 2 s.
 
 ## 9. Mocks
-- **You provide** `fake_vision.py` (:8100; random-but-seeded components; `/analyze` calls the real `bradford_sim.simulate`, so the assay is real from H2) and `fake_mapper.py` (:8200; stores files, writes tiles from canned PNGs).
+- **You provide** `fake_vision.py` (:8100; random-but-seeded components; `/analyze` calls the real `bradford_sim.simulate`, so the assay is real from I0) and `fake_mapper.py` (:8200; stores files, writes tiles from canned PNGs).
 - **You use** `fake_rover.py` (P2) for station bundles and `fake_brain.py` (P4) to drive the dashboard map.
 
 ## 10. Watch-outs
@@ -235,7 +227,6 @@ Acceptance summary: doc 03 §5 (models), the Bradford tests above, 06 D2/D5/D7�
 - Novelty memory must be **per run** and reset on `start_run`, or run 2 finds nothing novel.
 - Keep base64 sizes under the reducer limits (thumb ≤ 150,000 chars, local tile ≤ 700,000).
 - BEV rotation sign: the tile's image-up = rover +x; MapView rotates by `headingDeg` CCW. Test 06 D10 early.
-- Ollama JSON can still be invalid → validate with pydantic, fall back to the regex parser, and list assumptions.
 - **Never** let the assay look real: "SIMULATED — proof of concept" in the panel, chart title and drawer chip; `simulated=true` is enforced by the reducer.
 - Changing the simulator → bump `MODEL_VERSION` and update the golden vector in 00 §6.7 (contract change).
 

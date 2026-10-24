@@ -6,7 +6,7 @@
 | Option | 36 h feasible? | Verdict |
 |---|---|---|
 | Frozen image embeddings (SigLIP/CLIP via `open_clip`) + **logistic-regression heads** on MSL v2.1 (6.8K images) | **Yes**: embedding 6.8K images on the GX10 is minutes; LR fit is seconds | **Do this (core)** |
-| Same heads + AI4Mars terrain crops (a **subset**, e.g. 5–10K crops from the 6.47 GB HF mirror) | Yes, if the download starts at H0 | **Do this (core)** |
+| Same heads + AI4Mars terrain crops (a **subset**, e.g. 5–10K crops from the 6.47 GB HF mirror) | Yes, if the download starts first thing | **Do this (core)** |
 | ChemCam master list → category priors (human vs AEGIS target choices) | Yes, it's one 26 MB CSV and pandas | **Do this (core, differentiator)** |
 | Few-shot arena adaptation: 50–100 photos of *our* rocks, labeled in 30 min | Yes | **Do this (core: fixes the domain gap)** |
 | Zero-shot VLM captions via Ollama (for the "analyze" text and reasons) | Yes, if a model that runs on ARM64 is pulled before the venue ⚠️ | Core-lite; fallback = template strings |
@@ -60,14 +60,17 @@ Top target types in the file (rows): Bedrock 22,252 · Rock 8,264 · Passive Sky
 ## 4. Pipeline (`ml/`, run on the GX10)
 | Step | Script | Output | Time (estimate) |
 |---|---|---|---|
-| Download | `download/get_msl_v21.py`, `get_chemcam_obs.py`, `get_ai4mars.py --subset 8000` | `ml/data/…` | MSL+ChemCam: minutes; AI4Mars HF: ⚠️ venue bandwidth (**start at H0 or pre-download**) |
+| Download | `download/get_msl_v21.py`, `get_chemcam_obs.py`, `get_ai4mars.py --subset 8000` | `ml/data/…` | MSL+ChemCam: minutes; AI4Mars HF: ⚠️ venue bandwidth (**start first thing or pre-download**) |
 | Priors | `chemcam_priors.py` | `category_priors.json` | 1 min |
 | Embeddings | `build_embeddings.py --model <open_clip name>` | `msl_v21.npz`, `ai4mars_crops.npz` | minutes on GPU |
 | Heads | `train_heads.py` | `heads.joblib` (visual, category, terrain) + `metrics.json` | seconds |
-| Arena few-shot | `arena_fewshot.py --dir ml/data/arena/` | updates `heads.joblib` (sample weight ×5 for arena) | 30 min labeling |
+| Arena few-shot | `arena_fewshot.py --dir ml/data/arena/` | updates `heads.joblib` (sample weight ×5 for arena) | 30 min labeling (P1) |
+
+**Arena label layout** (P1 fills it, P3 owns this definition): `ml/data/arena/<category>/<crop>.jpg`, one folder per category from 00 §6.1 (`float_rock`, `layered`, `veined`, `sand`, `bedrock`, `pebble`).
+
 | Eval | `eval.py` | confusion matrix, per-class F1 on MSL test + arena hold-out | 1 min |
 
-**Model choice:** any `open_clip` ViT-B/16-class model (SigLIP or OpenAI CLIP). Pick one that installs cleanly on ARM64 + CUDA on DGX OS ⚠️ (PyTorch is preinstalled per the ASUS spec; `open_clip_torch` wheel compatibility ⚠️ test at H1). Fallback: CPU embeddings of 6.8K 227 px images is still feasible.
+**Model choice:** any `open_clip` ViT-B/16-class model (SigLIP or OpenAI CLIP). Pick one that installs cleanly on ARM64 + CUDA on DGX OS ⚠️ (PyTorch is preinstalled per the ASUS spec; `open_clip_torch` wheel compatibility ⚠️ test before I0). Fallback: CPU embeddings of 6.8K 227 px images is still feasible.
 
 **AI4Mars crops:** for each image, sample 128×128 patches whose mask is ≥ 80% one class (skip 255) and take the majority label. 2 crops/image × 4,000 images ≈ 8K crops.
 

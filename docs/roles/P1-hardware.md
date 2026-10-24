@@ -14,12 +14,13 @@ A rover that drives straight-ish, turns in place, carries a rigid camera mast an
 | Camera mast (rigid, 30–35° down) | Camera homography (P2) |
 | IMU + PCA9685 + optional ADS1115 physical mounting | Drivers (P2) |
 | ArUco markers (print, mount, measure), overhead stand | ArUco tracker code (P2 `gx10/overhead/`) |
-| Arena: home pad, heading arrow, ground, rocks, pickable pebbles | Arena photos for few-shot ML (P3 takes them; you lay out the arena) |
-| `hardware/` folder: `bom.csv`, `wiring/harness.md`, `scoop/`, `arena/`, `checklists/preflight.md` | Everything else in the repo |
+| Arena: home pad, heading arrow, ground, rocks, pickable pebbles | Few-shot training on the arena photos (P3 `arena_fewshot.py`) |
+| Arena photo session: 50–100 crops captured with P2's `station`, labeled into `ml/data/arena/` in the layout docs/03 defines (data only, gitignored) | Any file under `ml/` in git |
+| `hardware/` folder: `bom.csv`, `wiring/harness.md`, `scoop/`, `arena/`, `checklists/preflight.md`; `docs/01-hardware-and-assembly.md` and this file | Everything else in the repo |
 | Purchases/sourcing of the NEED items | |
 
 ## 3. Parts (your BOM, from [01 §3](../01-hardware-and-assembly.md#3-bill-of-materials))
-**HAVE (kit, verify at H0):** Pi (4 or 5?), chassis + DC gearmotors (no encoders), 2 servos (model?), IMU (chip?), rotary sensor (pot or encoder?), stepper (dropped), 2 webcams.
+**HAVE (kit, verify first):** Pi (4 or 5?), chassis + DC gearmotors (no encoders), 2 servos (model?), IMU (chip?), rotary sensor (pot or encoder?), stepper (dropped), 2 webcams.
 **NEED (sourced prices, 2026-10-23):** TB6612 $6.95 (Adafruit #2448) if the kit has no driver · PCA9685 $14.95 (#815) · 2 spare SG92R $5.95 each (#169) · 2× 4×AA holder with switch $2.95 (#830) + NiMH cells · 4700 µF cap $1.95 (#1589) · 100 µF ×10 $1.95 (#2193) · MPU-6050 $12.95 (#3886) **only if the kit IMU lacks a gyro** · ADS1115 $14.95 (#1085) **only if the rotary sensor is a pot** · kill switch · travel router.
 **MAKE:** arm (popsicle sticks), scoop bucket (~5×6×2.5 cm), 5 ArUco markers, arena.
 
@@ -47,18 +48,19 @@ PCA9685: **ch0 = shoulder, ch1 = wrist**, ch2–3 spares. V+ from the servo pack
 Expected I2C: `0x40` PCA9685, `0x68` IMU (MPU-6050), `0x48` ADS1115.
 
 ## 6. Build order with checkpoints
-| When | Step | ✅ Checkpoint (show P2 / P4) |
+| Done by | Step | ✅ Checkpoint (show P2 / P4) |
 |---|---|---|
-| H0–H1 | Inventory, photos, read chip markings. Fill U-1…U-8 in [05](../05-unknowns-and-risks.md#unknowns). Order/borrow NEED items | Unknowns table filled; purchase list sent to the team |
-| H1–H3 | Chassis + motors + wheels; mark the rover center dot | Wheels spin free; frame square |
-| H2–H4 | Packs, kill switch, star ground, caps | Multimeter: VM and V+ in range; kill switch cuts both; Pi stays up |
-| H3–H5 | TB6612 harness | **I0 support:** P2 spins both wheels both ways; STBY low stops them |
-| H4–H6 | I2C deck (IMU flat, centered, arrow = forward) | `i2cdetect -y 1` shows the addresses |
-| H5–H7 | Mast + camera (30–35° down) | Ground visible from ~10 cm ahead of the scoop lip to ≥ 1.5 m; mast doesn't wobble when you tap it |
-| H6–H12 | Scoop: center servos at 1500 µs **before** fitting horns; arm L1 ≈ 10 cm, L2 ≈ 5 cm; shoulder at the front-left corner, 4–5 cm left of the centerline | Hand-cycle STOW/DEPLOY/CURL/PRESENT/DUMP; STOW is out of the camera's view; no collisions |
-| H8–H14 | Overhead stand, markers (id 0 on the rover top, ids 1–4 at the arena corners), home pad + arrow, rocks + 6–10 pebbles | Overhead sees all 5 markers; marker positions measured into `hardware/arena/markers.yaml` |
-| H14–H24 | Harden: strain relief, zip ties, labels, spares pre-horned | 10 stations + 3 scoops in a row, no brownout |
-| H24+ | Pre-flight checklist; battery rotation; repairs only | Checklist printed and used before every run |
+| by I0 | Inventory, photos, read chip markings. Fill U-1…U-8 in [05](../05-unknowns-and-risks.md#unknowns). Order/borrow NEED items | Unknowns table filled; purchase list sent to the team |
+| by I1 | Chassis + motors + wheels; mark the rover center dot | Wheels spin free; frame square |
+| by I1 | Packs, kill switch, star ground, caps | Multimeter: VM and V+ in range; kill switch cuts both; Pi stays up |
+| by I1 | TB6612 harness | **I1 support:** P2 spins both wheels both ways; STBY low stops them |
+| by I1 | I2C deck (IMU flat, centered, arrow = forward) | `i2cdetect -y 1` shows the addresses |
+| by I1 | Mast + camera (30–35° down) | Ground visible from ~10 cm ahead of the scoop lip to ≥ 1.5 m; mast doesn't wobble when you tap it |
+| by I2 | Scoop: center servos at 1500 µs **before** fitting horns; arm L1 ≈ 10 cm, L2 ≈ 5 cm; shoulder at the front-left corner, 4–5 cm left of the centerline | Hand-cycle STOW/DEPLOY/CURL/PRESENT/DUMP; STOW is out of the camera's view; no collisions |
+| by I2 | Overhead stand, markers (id 0 on the rover top, ids 1–4 at the arena corners), home pad + arrow, rocks + 6–10 pebbles | Overhead sees all 5 markers; marker positions measured into `hardware/arena/markers.yaml` |
+| by I3 | Arena photo session + labels into `ml/data/arena/` | Crops labeled for every category present; P3 confirms the layout loads |
+| by I4 | Harden: strain relief, zip ties, labels, spares pre-horned | 10 stations + 3 scoops in a row, no brownout |
+| after I4 | Pre-flight checklist; battery rotation; repairs only | Checklist printed and used before every run |
 
 ## 7. Acceptance tests (yours)
 1. **Power isolation:** stall a servo by hand while the Pi runs → the Pi doesn't reboot.

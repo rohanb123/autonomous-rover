@@ -1,0 +1,14 @@
+# Owner: P3. Model choices for vision and ml (docs/03, P3 role doc). Everything else in config/ is P4's.
+# Values are placeholders until the early ARM64 smoke tests (docs/05 U-15) pick them.
+
+embedding:
+  open_clip_model: ""       # UNVERIFIED: ViT-B/16-class SigLIP or OpenAI CLIP that installs on ARM64 + CUDA
+  pretrained: ""
+  device: cuda
+
+heads_path: ml/models/heads.joblib
+category_priors_path: ml/models/category_priors.json
+
+ollama:
+  url: http://192.168.50.10:11434
+  caption_model: ""         # optional VLM; template captions if empty

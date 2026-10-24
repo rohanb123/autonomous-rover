@@ -1,0 +1,6 @@
+# P2. Needs cv2.aruco, so the contrib build.
+fastapi>=0.110
+uvicorn>=0.29
+websockets>=12
+numpy>=1.26
+opencv-contrib-python-headless>=4.9
