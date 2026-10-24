@@ -111,6 +111,22 @@ def create_app(store: RunStore | None = None, writer: Writer | None = None) -> F
         if writer is not None:
             writer.submit(reducer, reducer, *args)  # no hz entry -> must-send FIFO, never dropped
 
+    # GET /health (docs/00 §6.5): stdb is false with no writer, or for 30 s after a
+    # dropped write (RateLimitedWriter.dropped grew).
+    health_state = {"dropped": 0, "bad_at": 0.0}
+
+    def stdb_ok() -> bool:
+        if writer is None:
+            return False
+        dropped = getattr(writer, "dropped", 0)
+        if dropped > health_state["dropped"]:
+            health_state["dropped"], health_state["bad_at"] = dropped, time.time()
+        return time.time() - health_state["bad_at"] > 30.0
+
+    @app.get("/health")
+    def health() -> dict[str, Any]:
+        return {"ok": True, "stdb": stdb_ok()}
+
     def event(run_id: str, level: str, kind: str, msg: str, data: dict[str, Any]) -> None:
         eventlog.log(run_id, SRC, level, kind, msg, data)
         db("log_event", run_id, time.time(), SRC, level, kind, msg, json.dumps(data))

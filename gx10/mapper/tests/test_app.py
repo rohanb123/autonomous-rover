@@ -228,3 +228,10 @@ def test_module_app_exists_without_stdb_token(monkeypatch):
     monkeypatch.setenv("MAPPER_NO_STDB", "1")
     assert app_module.writer_from_env() is None
     assert app_module.app is not None
+
+
+def test_health_reports_stdb_writer(env):
+    client, writer, _ = env
+    assert client.get("/health").json() == {"ok": True, "stdb": True}
+    writer.dropped = 1  # a write was dropped
+    assert client.get("/health").json() == {"ok": True, "stdb": False}

@@ -198,3 +198,10 @@ def test_events_jsonl_written(env):
     client.post("/ingest/station", files=files)
     lines = (root / "runs" / RUN / "events.jsonl").read_text(encoding="utf-8").splitlines()
     assert json.loads(lines[0])["kind"] == "station_stored"
+
+
+def test_health_reports_stdb_writer(env):
+    client, writer, _ = env
+    assert client.get("/health").json() == {"ok": True, "stdb": True}
+    writer.dropped = 1  # a write was dropped
+    assert client.get("/health").json() == {"ok": True, "stdb": False}

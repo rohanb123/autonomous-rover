@@ -42,7 +42,7 @@ def test_save_sample_layout(tmp_path):
 def test_resolve_blocks_traversal_and_missing(tmp_path):
     s = RunStore(tmp_path / "data")
     s.save_sample(RUN, {"sample_id": "a_0001"}, b"x")
-    (tmp_path / "secret.txt").write_text("no")
+    (tmp_path / "secret.txt").write_text("no", encoding="utf-8")
     assert s.resolve(f"runs/{RUN}/samples/a_0001/present.jpg") is not None
     assert s.resolve("../secret.txt") is None
     assert s.resolve("runs/nope.jpg") is None
