@@ -1,0 +1,16 @@
+# Repo-wide tool config only. Installable packages: shared/py, rover, gx10.
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+extend-exclude = ["dashboard", "spacetimedb", "ml/data", "ml/models", "data"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP"]
+
+[tool.black]
+line-length = 100
+target-version = ["py311"]
+
+[tool.pytest.ini_options]
+testpaths = ["shared/py/tests", "rover/tests", "gx10"]
+addopts = "-q"

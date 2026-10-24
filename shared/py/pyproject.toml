@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "marsrover-shared"
+version = "1.0.0"
+description = "Contracts shared by the Pi and GX10: schemas, ids, frames, STDB client, event log"
+requires-python = ">=3.11"
+dependencies = [
+  "pydantic>=2",
+  "httpx>=0.27",
+]
+
+[tool.setuptools]
+packages = ["marsrover_shared"]

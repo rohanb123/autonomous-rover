@@ -1,0 +1,58 @@
+# Mirror of docs/00-overview-and-contracts.md §4, §6.1, §8, §9. Doc 00 wins; a test compares them.
+
+mission_defaults:          # from the §6.1 example
+  radius_m: 1.5
+  k: 3
+  categories: [any]
+  sample: true
+  return_home: true
+  max_duration_s: 900
+  mode: act
+
+mission_limits:
+  radius_m: [0.3, 3.0]
+  k: [1, 8]
+  categories: [float_rock, layered, veined, sand, bedrock, pebble, any]
+  modes: [act, suggest]
+
+survey:
+  extra_stations_if_radius_gt_m: 0.8
+  n_views: 8
+  step_deg: 45
+  bev_res_m_px: 0.005
+
+scoring:
+  weights: {novelty: 0.35, visual: 0.25, pickable: 0.15, category_score: 0.15, dist_norm: -0.10}
+  want_unrequested: 0.2    # want[c] for categories not in mission.categories
+  reason_max_chars: 140
+
+dedupe:
+  merge_xy_m: 0.15
+  merge_cos_min: 0.85
+  merge_xy_always_m: 0.06
+
+exclusion:
+  visit_radius_m: 0.20
+
+rates_hz:
+  rover_telemetry: 5
+  stdb_pose: 2
+  stdb_rover_status: 2
+  stdb_telemetry: 1
+  overhead_pose: 10
+
+timeouts_s:
+  cmd_ack: 0.5
+  heartbeat_period: 0.25
+  heartbeat_loss_stop: 1.0   # only while moving
+  station: 60
+  approach: 45
+  scoop: 30
+  clock_sync_tolerance: 0.05
+
+mars_delay:
+  horizons: {command: "499", center: "500@399", quantities: "20,21"}
+  cache_path: data/horizons_cache.json
+  compression_range: [1, 1000]
+  compression_default: 74.7  # ≈ 10 s effective delay
+  never_delayed: [estop, stop]

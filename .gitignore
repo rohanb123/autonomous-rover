@@ -1,0 +1,45 @@
+# --- runtime data (GX10 /data symlink) ---
+data/*
+!data/.gitkeep
+
+# --- datasets and models (ml/) ---
+ml/data/*
+!ml/data/.gitkeep
+ml/models/*
+!ml/models/.gitkeep
+
+# --- secrets / local env (examples are committed) ---
+.env
+.env.*
+!.env.example
+config/.env
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+build/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# --- Node / TS ---
+node_modules/
+dist/
+*.tsbuildinfo
+npm-debug.log*
+
+# --- SpacetimeDB local state ---
+.spacetime/
+
+# --- editors / OS ---
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/extensions.json
+*.swp
+*.log
