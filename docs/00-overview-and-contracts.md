@@ -104,7 +104,7 @@ ares-scout/
 │   │   ├── rover_link.py          WS client to Pi, cmd tracking, heartbeat
 │   │   ├── overhead_link.py       subscribes to overhead :8300
 │   │   ├── stdb_writer.py         rate-limited writes (poses, status) via StdbClient
-│   │   ├── vision_client.py       /score client + category priors loader
+│   │   ├── vision_client.py       vision /score + /analyze, mapper /fuse clients; priors loader
 │   │   └── voice/                 P4  (ASR + NLU)
 │   │       ├── requirements.txt
 │   │       ├── asr.py             audio bytes → text (Grok STT; faster-whisper offline backup)

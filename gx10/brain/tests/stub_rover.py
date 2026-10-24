@@ -39,6 +39,10 @@ class StubRover:
         self.fail: dict[str, str] = {}  # op -> error code to reply with
         self.hold_station = asyncio.Event()  # cleared = station blocks (tests pause/stop)
         self.hold_station.set()
+        self.hold_scoop = asyncio.Event()  # cleared = scoop blocks (tests skip/come_back)
+        self.hold_scoop.set()
+        self.lost: set[tuple[float, float]] = set()  # rock xy whose approach loses the target
+        self.lose_first = False  # the first approached target is lost
         self._props = 0
         self._server = None
         self.url = ""
@@ -105,6 +109,8 @@ class StubRover:
         result = self._apply(cmd)
         if cmd.op == "station":
             await self.hold_station.wait()
+        if cmd.op == "scoop":
+            await self.hold_scoop.wait()
         await ws.send(Done(cmd_id=cmd.cmd_id, result=result).model_dump_json())
 
     def _apply(self, cmd: Cmd) -> dict:
@@ -120,6 +126,29 @@ class StubRover:
             return {"latched": False}
         elif cmd.op == "station":
             return self._station(a["station_id"])
+        elif cmd.op == "approach":
+            if self.lose_first:
+                self.lose_first = False
+                self.lost.add((round(a["x"], 3), round(a["y"], 3)))
+            if (round(a["x"], 3), round(a["y"], 3)) in self.lost:
+                return {"in_zone": False, "pose": self.pose().model_dump(), "offset_px": [99, 99]}
+            dx, dy = a["x"] - self.x, a["y"] - self.y
+            d = math.hypot(dx, dy)
+            if d > 0.12:  # stop 12 cm short, facing the rock: scoop zone
+                self.x += dx * (d - 0.12) / d
+                self.y += dy * (d - 0.12) / d
+            self.heading = math.degrees(math.atan2(dy, dx))
+            return {"in_zone": True, "pose": self.pose().model_dump(), "offset_px": [0, 0]}
+        elif cmd.op == "scoop":
+            return {
+                "present_image": f"http://stub/present/{a['sample_id']}.jpg",
+                "uploaded": True,
+                "pose": self.pose().model_dump(),
+            }
+        elif cmd.op == "snapshot":
+            return {"url": "http://stub/snapshot.jpg"}
+        elif cmd.op == "dump":
+            return {"ok": True}
         return {"pose": self.pose().model_dump()}
 
     def _station(self, station_id: str) -> dict:
@@ -157,11 +186,77 @@ class StubRover:
         }
 
 
+GOLDEN_ASSAY = {
+    "assay_type": "bradford_sim",
+    "simulated": True,
+    "model_version": "bradford_sim-1",
+    "seed": 3896889563,
+    "a595": 0.2585,
+    "concentration": 282.1,
+    "units": "µg/mL",
+    "verdict": "low",
+    "in_linear_range": True,
+    "standard_curve_params": {
+        "standard": "BSA",
+        "wavelength_nm": 595,
+        "linear_range": [125.0, 1000.0],
+        "true_model": {"type": "hyperbolic", "amax": 3.0, "k": 3000.0, "noise_sd": 0.01},
+        "fit": {
+            "type": "linear",
+            "slope": 0.0007188,
+            "intercept": 0.0557,
+            "r2": 0.9947,
+            "fit_range": [125.0, 1000.0],
+        },
+        "blank_a595": -0.0068,
+        "standards": [{"c": 0, "a595": [0.0073, -0.0063, -0.001]}],
+    },
+}
+
+
+class StubMapper:
+    def __init__(self) -> None:
+        self.fused: list[str] = []
+
+    async def fuse(self, run_id: str) -> dict:
+        self.fused.append(run_id)
+        return {"ok": True, "tiles": 4}
+
+
 class StubVision:
-    """Deterministic /score: rocks further from home look more novel; same rock, same embedding."""
+    """Deterministic /score: rocks further from home look more novel; same rock, same embedding.
+    /analyze returns the golden assay; `empty[cand_id] = n` makes the first n scoops empty."""
 
     def __init__(self) -> None:
         self.calls = 0
+        self.empty: dict[str, int] = {}
+        self.empty_first = 0  # the first analyzed target comes up empty this many times
+        self.analyzed: list[str] = []
+
+    async def analyze(self, req):
+        from marsrover_shared.schemas import AnalysisResult
+
+        if not self.analyzed and self.empty_first:
+            self.empty[req.cand_id] = self.empty_first
+        self.analyzed.append(req.cand_id)
+        if self.analyzed.count(req.cand_id) <= self.empty.get(req.cand_id, 0):
+            return AnalysisResult(
+                sample_id=req.sample_id,
+                scoop_has_item=False,
+                label="",
+                confidence=0.0,
+                caption="Empty scoop.",
+                simulated=True,
+            )
+        return AnalysisResult(
+            sample_id=req.sample_id,
+            scoop_has_item=True,
+            label="float_rock",
+            confidence=0.62,
+            caption="A small dark rock.",
+            simulated=True,
+            assay=GOLDEN_ASSAY,
+        )
 
     async def score(self, run_id, items):
         from marsrover_shared.schemas import ScoreRespItem

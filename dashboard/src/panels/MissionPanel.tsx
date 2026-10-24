@@ -11,7 +11,7 @@ function parse<T>(json: string, fallback: T): T {
 
 // Latest mission with parsed params and assumptions; text box sends a mission (docs/06 §5).
 // Push-to-talk (VoiceButton) sits next to the text box.
-export default function MissionPanel({ missions, live }: { missions: readonly Mission[]; live: boolean }) {
+export default function MissionPanel({ missions, live, fsmState }: { missions: readonly Mission[]; live: boolean; fsmState?: string }) {
   const m = [...missions].sort((a, b) => b.missionId.localeCompare(a.missionId))[0]; // m_0002 > m_0001
   const p = m ? parse<Params>(m.paramsJson, {}) : {};
   const assumptions = m ? parse<string[]>(m.assumptionsJson, []) : [];
@@ -44,6 +44,13 @@ export default function MissionPanel({ missions, live }: { missions: readonly Mi
         <button disabled={!live || !text.trim()} onClick={send}>Send</button>
         <VoiceButton disabled={!live} onError={setErr} />
       </div>
+      {m && fsmState === 'AWAIT_APPROVAL' && (
+        <div className="row approve">
+          <span className="meta">Suggest mode: plan ready.</span>
+          <button onClick={() => brain.approve(m.missionId, true).then(() => setErr(''), (e) => setErr(String(e.message ?? e)))}>Approve</button>
+          <button onClick={() => brain.approve(m.missionId, false).then(() => setErr(''), (e) => setErr(String(e.message ?? e)))}>Reject</button>
+        </div>
+      )}
       {err && <p className="error">{err}</p>}
     </section>
   );

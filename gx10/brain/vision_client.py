@@ -1,4 +1,5 @@
-"""Client for the vision service (doc 00 §6.6–6.7) and the category priors it relies on."""
+"""Clients for vision (/score, /analyze; doc 00 §6.6–6.7) and mapper (/fuse), plus the
+category priors scoring relies on."""
 
 from __future__ import annotations
 
@@ -9,7 +10,14 @@ from pathlib import Path
 import httpx
 
 from brain import settings
-from marsrover_shared.schemas import ScoreReq, ScoreReqItem, ScoreResp, ScoreRespItem
+from marsrover_shared.schemas import (
+    AnalysisResult,
+    AnalyzeReq,
+    ScoreReq,
+    ScoreReqItem,
+    ScoreResp,
+    ScoreRespItem,
+)
 
 log = logging.getLogger(__name__)
 
@@ -36,6 +44,27 @@ class VisionClient:
         )
         resp.raise_for_status()
         return ScoreResp.model_validate_json(resp.content).items
+
+    async def analyze(self, req: AnalyzeReq) -> AnalysisResult:
+        resp = await self._http.post(
+            "/analyze", content=req.model_dump_json(), headers={"Content-Type": "application/json"}
+        )
+        resp.raise_for_status()
+        return AnalysisResult.model_validate_json(resp.content)
+
+    async def close(self) -> None:
+        await self._http.aclose()
+
+
+class MapperClient:
+    def __init__(self, base_url: str, timeout_s: float = 60.0) -> None:
+        self._http = httpx.AsyncClient(base_url=base_url.rstrip("/"), timeout=timeout_s)
+
+    async def fuse(self, run_id: str) -> dict:
+        """POST /fuse/{run_id}: global mosaic + tiles (P3); returns {ok, tiles}."""
+        resp = await self._http.post(f"/fuse/{run_id}")
+        resp.raise_for_status()
+        return resp.json()
 
     async def close(self) -> None:
         await self._http.aclose()

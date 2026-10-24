@@ -11,7 +11,7 @@ import time
 from collections.abc import Mapping
 
 from marsrover_shared import eventlog
-from marsrover_shared.schemas import Candidate, Pose, Telemetry
+from marsrover_shared.schemas import AnalysisResult, Candidate, Pose, Telemetry, Visit
 from marsrover_shared.stdb_http import RateLimitedWriter, StdbClient
 
 RATES_HZ = {"pose": 2.0, "status": 2.0, "telemetry": 1.0}
@@ -115,6 +115,56 @@ class BrainDb:
             c.reason,
             c.thumb_url,
             time.time(),
+        )
+
+    def visit(self, v: Visit) -> None:
+        self._w.submit(
+            f"visit:{v.visit_id}",
+            "mark_visited",
+            v.visit_id,
+            v.run_id,
+            v.cand_id,
+            v.x,
+            v.y,
+            v.radius_m,
+            v.outcome,
+            v.t,
+        )
+
+    def analysis(
+        self,
+        run_id: str,
+        a: AnalysisResult | None,
+        sample_id: str,
+        cand_id: str,
+        visit_id: str,
+        image_url: str,
+    ) -> None:
+        """add_analysis (docs/02 §6). No assay (empty scoop) -> the documented sentinels."""
+        t = time.time()
+        head = [run_id, sample_id, cand_id, visit_id, t, image_url]
+        if a is None:
+            body = ["", 0.0, "", False]
+        else:
+            body = [a.label, a.confidence, a.caption, a.scoop_has_item]
+        if a is not None and a.assay is not None:
+            s = a.assay
+            assay = [
+                s.assay_type,
+                s.a595,
+                s.concentration,
+                s.units,
+                s.verdict,
+                s.in_linear_range,
+                s.standard_curve_params.model_dump_json(),
+                True,
+                s.seed,
+                s.model_version,
+            ]
+        else:
+            assay = ["", -1.0, -1.0, "", "", False, "{}", True, 0, ""]
+        self._w.submit(
+            f"analysis:{sample_id}:{time.time_ns()}", "add_analysis", *head, *body, *assay
         )
 
     # --- rover state (coalesced: pose/status 2 Hz, telemetry 1 Hz) -----------------------------

@@ -89,6 +89,7 @@ TypeScript: `spacetimedb/src/schema.ts`, `index.ts` (02 §5–6); `dashboard/src
 3. **PLAN:** `nn_route(pose, topk)` → `upsert_task` ×k. `suggest` mode → AWAIT_APPROVAL.
 4. **INVESTIGATE** each: `approach` (E_LOST_TARGET → outcome `unreachable`) → `scoop` → `/analyze(interest_score=score)` → if `scoop_has_item` false: one retry (re-approach + scoop), then outcome `empty_scoop` → `dump` → `mark_visited` (radius 0.20) → `add_analysis` → re-run `excluded` over remaining candidates → recompute the NN route from the new pose.
 5. **RETURN:** drive home → `end_run` → `POST mapper /fuse/{run_id}` → run status `done`.
+- **Decisions (P4, 2026-10-24):** the INVESTIGATE targets are frozen at PLAN; after each visit only the remaining planned targets are re-ordered by NN. k counts *attempts* (sampled, empty_scoop, unreachable); a planned target that gets excluded or skipped by the operator is replaced by the best open candidate, so the run still makes k attempts. Look-only missions (`sample: false`) approach + `snapshot` each target and record the visit as `skipped`. `come_back` works from SURVEY, INVESTIGATE (the interrupted target goes back to `queued`), AWAIT_APPROVAL and STOPPED; `/api/run/end` uses it too.
 - Every transition: `log_event` + events.jsonl. Every 0.5 s: `upsert_rover_status`.
 
 ## 6. Stop and E-STOP

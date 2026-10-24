@@ -34,9 +34,23 @@ class FakeVision:
 
 
 class FakeFsm:
-    def __init__(self, link, vision, db, priors):
+    def __init__(self, link, vision, db, priors, mapper=None):
         self.state, self.active_cand, self.cands, self.busy = "IDLE", "", {}, False
         self.calls = []
+        self.on_run_ended = None
+
+    def skip(self):
+        self.calls.append(("skip",))
+
+    def come_back(self):
+        self.calls.append(("come_back",))
+
+    def approve(self, mission_id, approve):
+        from brain.fsm import NotNow
+
+        if mission_id != "m_0001":
+            raise NotNow("not awaiting")
+        self.calls.append(("approve", approve))
 
     def start_mission(self, mission, ids):
         self.calls.append(("start", mission["mission_id"]))
@@ -63,6 +77,7 @@ def client(monkeypatch):
     monkeypatch.setattr(app_mod, "BrainDb", lambda client: db)
     monkeypatch.setattr(app_mod, "RoverLink", FakeLink)
     monkeypatch.setattr(app_mod, "VisionClient", FakeVision)
+    monkeypatch.setattr(app_mod, "MapperClient", FakeVision)
     monkeypatch.setattr(app_mod, "RunFSM", FakeFsm)
     monkeypatch.setattr(
         nlu, "_parse_grok", lambda text: (_ for _ in ()).throw(ConnectionError("offline"))
@@ -124,10 +139,21 @@ def test_rover_controls(client):
         assert client.post("/api/quick", json=body).status_code == 200
     assert client.post("/api/estop", json={}).status_code == 200
     assert client.post("/api/estop/clear", json={}).status_code == 200
-    assert [c[0] for c in client.fsm.calls] == ["pause", "resume", "stop", "estop", "clear_estop"]
-    assert client.post("/api/quick", json={"cmd": "skip"}).status_code == 503
-    assert (
-        client.post("/api/approve", json={"mission_id": "m_0001", "approve": True}).status_code
-        == 503
-    )
+    for body in ({"cmd": "skip"}, {"cmd": "come_back"}):
+        assert client.post("/api/quick", json=body).status_code == 200
+    ok = client.post("/api/approve", json={"mission_id": "m_0001", "approve": True})
+    assert ok.status_code == 200
+    bad = client.post("/api/approve", json={"mission_id": "m_0009", "approve": True})
+    assert bad.status_code == 409
+    calls = [c[0] for c in client.fsm.calls]
+    assert calls == [
+        "pause",
+        "resume",
+        "stop",
+        "estop",
+        "clear_estop",
+        "skip",
+        "come_back",
+        "approve",
+    ]
     assert client.get("/api/health").json()["rover_link"] == "ok"

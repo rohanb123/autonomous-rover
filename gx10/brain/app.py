@@ -1,8 +1,8 @@
 """Brain service, FastAPI :8000: the dashboard's only command API (doc 00 §6.11).
 
-Built so far: runs; text and voice missions (Grok with the offline backup) that start the
-campaign (SURVEY -> PLAN); pause / resume / stop / E-STOP; health. Still to come with the
-INVESTIGATE phase: skip, come_back, approve. Those answer 503 until then.
+Runs; text and voice missions (Grok with the offline backup) that start the full campaign
+(SURVEY -> PLAN -> INVESTIGATE -> RETURN); pause / resume / skip / come_back / stop /
+E-STOP / approve; health.
 
 Run (from gx10/):  uvicorn brain.app:app --port 8000
 """
@@ -20,10 +20,10 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 
 from brain import settings
-from brain.fsm import FsmBusy, RunFSM
+from brain.fsm import FsmBusy, NotNow, RunFSM
 from brain.rover_link import RoverError, RoverLink
 from brain.stdb_writer import BrainDb
-from brain.vision_client import VisionClient, load_priors
+from brain.vision_client import MapperClient, VisionClient, load_priors
 from brain.voice import asr, nlu
 from marsrover_shared.ids import IdGen, new_run_id
 from marsrover_shared.schemas import (
@@ -87,7 +87,14 @@ async def lifespan(app: FastAPI):
     db = BrainDb(StdbClient.from_env("STDB_TOKEN_BRAIN"))
     link = RoverLink(_ws_url("ROVER_URL", "rover_ws"))
     vision = VisionClient(_url("VISION_URL", "vision"))
-    b = Brain(db, link, RunFSM(link, vision, db, load_priors()))
+    mapper = MapperClient(_url("MAPPER_URL", "mapper"))
+    b = Brain(db, link, RunFSM(link, vision, db, load_priors(), mapper))
+
+    def on_run_ended(run_id: str) -> None:
+        if b.run_id == run_id:
+            b.run_id = ""
+
+    b.fsm.on_run_ended = on_run_ended
 
     def on_telemetry(tel):
         if b.run_id:
@@ -106,6 +113,7 @@ async def lifespan(app: FastAPI):
     status.cancel()
     await link.stop()
     await vision.close()
+    await mapper.close()
     db.close()
 
 
@@ -174,9 +182,14 @@ async def run_start(req: RunStartReq, request: Request) -> CommandAccepted:
 async def run_end(request: Request) -> CommandAccepted:
     b = brain_of(request)
     run_id = b.require_run()
-    if b.fsm.busy:
-        await b.fsm.stop()
-    # Until RETURN exists this ends the run where the rover is (no return-home / fuse yet).
+    if b.link.connected:
+        try:  # return home -> end_run -> fuse, through the FSM (doc 00 §6.11)
+            b.fsm.come_back()
+            b.db.event("run", f"Run {run_id}: ending, rover returning home")
+            return b.accepted()
+        except NotNow:
+            pass
+    # No rover link (or nothing to bring back): end where it stands.
     b.db.event("run", f"Run {run_id} ended")
     b.db.run_ended(run_id, "done")
     b.run_id = ""
@@ -241,8 +254,6 @@ async def mission_voice(request: Request) -> CommandAccepted:
 
 # --- rover control --------------------------------------------------------------------------------
 
-_NEEDS_INVESTIGATE = "needs the INVESTIGATE phase, which isn't built yet."
-
 
 async def _quick(b: Brain, cmd: str) -> CommandAccepted:
     if cmd == "pause":
@@ -254,8 +265,11 @@ async def _quick(b: Brain, cmd: str) -> CommandAccepted:
     elif cmd == "status":
         link = "up" if b.link.connected else "down"
         b.db.event("status", f"FSM {b.fsm.state}; {len(b.fsm.cands)} candidates; link {link}")
-    else:  # skip, come_back
-        raise HTTPException(503, f"'{cmd}' {_NEEDS_INVESTIGATE}")
+    else:
+        try:
+            b.fsm.skip() if cmd == "skip" else b.fsm.come_back()
+        except NotNow as e:
+            raise HTTPException(409, f"'{cmd}': {e}") from e
     return b.accepted()
 
 
@@ -286,6 +300,12 @@ async def estop_clear(request: Request) -> CommandAccepted:
     return b.accepted()
 
 
-@app.post("/api/approve")
-async def approve(req: ApproveReq) -> None:
-    raise HTTPException(503, f"approve {req.mission_id}: {_NEEDS_INVESTIGATE}")
+@app.post("/api/approve", response_model=CommandAccepted)
+async def approve(req: ApproveReq, request: Request) -> CommandAccepted:
+    b = brain_of(request)
+    try:
+        b.fsm.approve(req.mission_id, req.approve)
+    except NotNow as e:
+        raise HTTPException(409, f"approve: {e}") from e
+    b.db.event("approve", f"{req.mission_id} {'approved' if req.approve else 'rejected'}")
+    return b.accepted()

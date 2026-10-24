@@ -19,11 +19,11 @@ export default function App() {
   const [pinned, setPinned] = useState(false); // true once the user picks a run by hand
   const [mode, setMode] = useState<Mode>('live');
 
-  // Follow the newest run (active first) until the user picks one.
+  // Follow the newest run until the user picks one (live if it's active, else replay).
+  // Newest, not "newest active": a run left active by a crashed brain mustn't win.
   useEffect(() => {
     if (pinned || runs.length === 0) return;
-    const newest = [...runs].sort((a, b) => b.startedUnix - a.startedUnix);
-    const pick = newest.find((r) => r.status === 'active') ?? newest[0];
+    const pick = [...runs].sort((a, b) => b.startedUnix - a.startedUnix)[0];
     setRunId(pick.runId);
     setMode(pick.status === 'active' ? 'live' : 'replay');
   }, [runs, pinned]);
@@ -63,7 +63,7 @@ export default function App() {
       </main>
 
       <aside className="side">
-        <MissionPanel missions={t.missions} live={live} />
+        <MissionPanel missions={t.missions} live={live} fsmState={roverStatus?.runId === runId ? roverStatus?.fsmState : undefined} />
         <TaskQueuePanel tasks={t.tasks} candidates={t.candidates} />
         <KeyframePanel keyframes={t.keyframes} />
       </aside>
