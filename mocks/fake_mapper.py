@@ -214,7 +214,7 @@ def create_app(
 
         x, y, hdg = st.pose.x, st.pose.y, st.pose.heading_deg
         for kf in st.keyframes:
-            # UNVERIFIED: kf.heading_deg is taken as the mission-frame heading at capture.
+            # kf.heading_deg is the absolute mission-frame heading at capture (docs/00 §6.4).
             db(
                 "upsert_keyframe",
                 kf.kf_id,

@@ -2,7 +2,7 @@
 
 **From:** Aditi (P3) · **To:** Rohan (P4) · **Date:** 2026-10-24
 **Code:** branch `p3/mapview`, `dashboard/src/map/MapView.tsx`
-**Status:** open
+**Status:** done (P4, 2026-10-24). Mounted in `dashboard/src/App.tsx` (b377eda); the conditional-import workaround was replaced with a direct `import MapView from './map/MapView'` once the default export landed.
 
 MapView is built to the docs/06 §4 `MapViewProps` interface (arrays typed `readonly`, so the rows
 from `useRunTables` pass straight in). `App.tsx` is yours, so I haven't touched it. To mount it,
