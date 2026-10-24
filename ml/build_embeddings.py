@@ -1,7 +1,7 @@
 """Embed the training images with the frozen open_clip model (docs/03 §4).
 
 Outputs (ml/data/embeddings/, gitignored):
-  msl_v21.npz        all 6,820 MSL v2.1 images: emb, label (0-18), split (train/val/test), file
+  msl_v21.npz        all 6,820 MSL v2.1 images: emb, label (0-18), split (train/val/test), image
   ai4mars_crops.npz  128×128 terrain crops: emb, label (0 soil, 1 bedrock, 2 sand, 3 big rock),
                      split (train from the train shards, test from test_min3), source image
 Each file also stores `model` (open_clip name/pretrained) so heads can't be trained against
@@ -67,7 +67,7 @@ def build_msl(emb: Embedder, msl_dir: Path, batch: int) -> dict:
         "emb": np.concatenate(vecs).astype(np.float16),
         "label": np.array([lab for _, lab, _ in items], dtype=np.int16),
         "split": np.array([s for _, _, s in items]),
-        "file": np.array([n for n, _, _ in items]),
+        "image": np.array([n for n, _, _ in items]),
     }
 
 
