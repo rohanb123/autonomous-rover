@@ -206,3 +206,91 @@ def test_close_drops_the_driver_and_the_bus():
     imu.close()
     assert imu.present is False and imu.detect() == NONE
     assert imu.read() == {} and bus.closed is True
+
+
+# --- gyro bias (docs/05 R2: a stationary bias is pure heading error) ----------------------
+
+
+def biased(gz_dps: float = 0.0, **kwargs) -> tuple[Imu, helpers.FakeClock]:
+    """An MPU reading a constant `gz_dps`, on a clock the test drives."""
+    clock = helpers.FakeClock()
+    imu = Imu(helpers.fake_mpu_bus(gz_dps=gz_dps), clock=clock, sleep=clock.sleep, **kwargs)
+    return imu, clock
+
+
+@pytest.mark.parametrize("bias", [0.0, 1.4, -2.1, 0.08])
+def test_a_constant_bias_is_measured_and_then_subtracted(bias: float):
+    imu, _ = biased(bias)
+    assert imu.read()["gz_dps"] == pytest.approx(bias, abs=0.02)
+    measured = imu.gyro_bias_calibrate(2.0)
+    assert measured == pytest.approx(bias, abs=0.02)
+    # From here on a still rover reads zero, which is the whole point.
+    assert imu.read()["gz_dps"] == pytest.approx(0.0, abs=0.02)
+
+
+def test_calibration_takes_the_time_it_was_asked_for():
+    imu, clock = biased(1.0)
+    imu.gyro_bias_calibrate(2.0)
+    assert clock.t == pytest.approx(2.0, abs=0.05)
+
+
+def test_recalibrating_does_not_correct_a_correction():
+    """The second pass must measure the raw sensor, not the already-corrected reading."""
+    imu, _ = biased(3.0)
+    assert imu.gyro_bias_calibrate(1.0) == pytest.approx(3.0, abs=0.02)
+    assert imu.gyro_bias_calibrate(1.0) == pytest.approx(3.0, abs=0.02)
+    assert imu.gyro_bias_dps == pytest.approx(3.0, abs=0.02)
+
+
+def test_an_accel_only_part_reports_no_bias_and_does_not_hang():
+    clock = helpers.FakeClock()
+    imu = Imu(helpers.fake_adxl_bus(), clock=clock, sleep=clock.sleep)
+    assert imu.gyro_bias_calibrate(5.0) == 0.0
+    assert clock.t == 0.0, "nothing to sample, so no time spent"
+
+
+def test_zero_seconds_collects_nothing_and_keeps_the_old_bias():
+    imu, _ = biased(2.0)
+    imu.gyro_bias_calibrate(1.0)
+    before = imu.gyro_bias_dps
+    assert imu.gyro_bias_calibrate(0.0) == pytest.approx(before)
+    assert imu.gyro_bias_dps == pytest.approx(before), "must not silently zero the bias"
+
+
+def test_a_noisy_calibration_warns_that_the_rover_was_probably_moving(caplog):
+    """A wide spread means it was not stationary, so the bias is not trustworthy."""
+
+    class Swinging(helpers.FakeBus):
+        """Alternates +50 and -50 deg/s, as if someone was turning it by hand."""
+
+        def __init__(self, devices):
+            super().__init__(devices)
+            self._flip = False
+
+        def read_block(self, addr: int, reg: int, length: int) -> list[int]:
+            self._flip = not self._flip
+            dps = 50.0 if self._flip else -50.0
+            raw = helpers.fake_mpu_bus(gz_dps=dps).devices[MPU_ADDR]
+            return [raw.get(reg + i, 0) for i in range(length)]
+
+    clock = helpers.FakeClock()
+    imu = Imu(Swinging(helpers.fake_mpu_bus().devices), clock=clock, sleep=clock.sleep)
+    with caplog.at_level("WARNING"):
+        bias = imu.gyro_bias_calibrate(0.5)
+    assert bias == pytest.approx(0.0, abs=5.0), "the swings average out, which is the trap"
+    assert any("spread" in r.message for r in caplog.records)
+
+
+def test_a_bus_that_fails_throughout_gives_up_rather_than_spinning(caplog):
+    class Flaky(helpers.FakeBus):
+        def read_block(self, addr: int, reg: int, length: int) -> list[int]:
+            raise OSError(121, "Remote I/O error")
+
+    clock = helpers.FakeClock()
+    imu = Imu(helpers.fake_mpu_bus(), clock=clock, sleep=clock.sleep)
+    imu.bus = Flaky(imu.bus.devices)
+    imu._driver.bus = imu.bus  # type: ignore[union-attr]
+    with caplog.at_level("WARNING"):
+        assert imu.gyro_bias_calibrate(10.0) == 0.0
+    assert clock.t < 1.0, "gave up early instead of retrying for the full ten seconds"
+    assert any("gave up" in r.message for r in caplog.records)

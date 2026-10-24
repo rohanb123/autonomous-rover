@@ -76,6 +76,12 @@ ADXL_LSB_PER_G = 256.0
 
 NONE = "none"
 
+#: Bias calibration: how fast to sample, how many bus errors to tolerate, and the spread
+#: above which the reading is probably not a stationary rover.
+GYRO_BIAS_PERIOD_S = 0.01
+GYRO_BIAS_MAX_FAILURES = 5
+GYRO_BIAS_SPREAD_WARN_DPS = 5.0
+
 
 class ImuUnavailable(RuntimeError):
     """No I2C bus, or nothing recognisable at any of the configured addresses."""
@@ -266,6 +272,62 @@ class Imu:
         if "gz_dps" in sample:
             sample["gz_dps"] -= self.gyro_bias_dps
         return sample
+
+    # --- gyro bias -----------------------------------------------------------------------
+
+    def gyro_bias_calibrate(self, seconds: float = 2.0) -> float:
+        """Average `gz_dps` while the rover is still, and subtract it from then on.
+
+        An MPU-6050 at rest typically reads a degree or two per second of nothing. Left
+        alone that is pure heading error: at 1 deg/s, a 4 s station spin ends 4 degrees out,
+        and doc 05 notes a 5 degree error at 1.5 m is 13 cm -- past the 0.20 m exclusion
+        radius. So this runs once at `start_run`, and **the rover must be stationary**.
+
+        Returns the measured bias in deg/s (0.0 when there is no gyro). Samples at the
+        driver's own pace rather than a fixed rate, so a slow bus just yields fewer samples
+        instead of lying about the average.
+        """
+        if not self.has_gyro():
+            return 0.0
+        # Measure against a zero bias, or we would be correcting a correction.
+        previous, self.gyro_bias_dps = self.gyro_bias_dps, 0.0
+        samples: list[float] = []
+        deadline = self.clock() + max(0.0, seconds)
+        failures = 0
+        try:
+            while self.clock() < deadline:
+                try:
+                    samples.append(float(self.read().get("gz_dps", 0.0)))
+                except OSError as e:
+                    failures += 1
+                    if failures > GYRO_BIAS_MAX_FAILURES:
+                        log.warning("gyro bias calibration gave up after %d bus errors", failures)
+                        break
+                    log.debug("gyro bias sample failed: %s", e)
+                self.sleep(GYRO_BIAS_PERIOD_S)
+        finally:
+            if not samples:
+                self.gyro_bias_dps = previous  # keep whatever we had rather than zeroing it
+        if not samples:
+            log.warning("gyro bias calibration collected no samples; keeping %.3f", previous)
+            return previous
+        bias = sum(samples) / len(samples)
+        self.gyro_bias_dps = bias
+        spread = max(samples) - min(samples)
+        log.info(
+            "gyro bias %.3f deg/s from %d samples over %.1f s (spread %.3f)",
+            bias,
+            len(samples),
+            seconds,
+            spread,
+        )
+        if spread > GYRO_BIAS_SPREAD_WARN_DPS:
+            log.warning(
+                "gyro readings spread %.2f deg/s during calibration: was the rover moving, "
+                "or is it sitting on something that vibrates? The bias is suspect",
+                spread,
+            )
+        return bias
 
     def close(self) -> None:
         with self._lock:
