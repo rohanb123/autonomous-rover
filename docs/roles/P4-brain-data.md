@@ -73,6 +73,8 @@ class RoverLink:
 class OverheadLink:
     async def run(self, url: str = "ws://192.168.50.10:8300/pose") -> None
     def latest(self, max_age_s: float = 0.5) -> OverheadPose | None   # brain sends set_pose(source="aruco") at each station if fresh and reproj_err_px < 2
+    def usable(self) -> OverheadPose | None      # fresh + visible + reproj_err_px < 2; the FSM calls set_pose with it before each station
+    health: str                                   # ok (fresh poses) | degraded (connected, stale) | down -> HealthResp.overhead
 
 # gx10/brain/stdb_writer.py
 class BrainDb:   # thin wrappers that call RateLimitedWriter / StdbClient with positional args from 02 §6

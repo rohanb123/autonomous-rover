@@ -30,6 +30,7 @@ from marsrover_shared.schemas import (
     AnalyzeReq,
     Candidate,
     Mission,
+    OverheadPose,
     Pose,
     ScoreReqItem,
     ScoreRespItem,
@@ -62,6 +63,10 @@ class Mapper(Protocol):
     async def fuse(self, run_id: str) -> dict: ...
 
 
+class Overhead(Protocol):
+    def usable(self) -> OverheadPose | None: ...
+
+
 # Candidate status after a visit, mirroring the mark_visited reducer.
 STATUS_AFTER = {
     "sampled": "visited",
@@ -91,8 +96,10 @@ class RunFSM:
         db: BrainDb,
         priors: Mapping[str, float],
         mapper: Mapper | None = None,
+        overhead: Overhead | None = None,
     ) -> None:
         self.link, self.vision, self.db, self.priors, self.mapper = link, vision, db, priors, mapper
+        self.overhead = overhead
         self.on_run_ended = lambda run_id: None
         self._target_task: asyncio.Task | None = None
         self._skip = self._come_back = False
@@ -287,9 +294,28 @@ class RunFSM:
             self.db.task(tid, self.run_id, m.mission_id, "station", sid, seq, "active")
             await self._go_to(x, y)
             await self._checkpoint()
+            await self._correct_pose(sid)
             raw = await self._cmd("station", {"station_id": sid, "n_views": 8, "step_deg": 45})
             await self._ingest_station(StationResult.model_validate(raw))
             self.db.task(tid, self.run_id, m.mission_id, "station", sid, seq, "done")
+
+    async def _correct_pose(self, station_id: str) -> None:
+        """Reset dead-reckoning drift from the overhead ArUco pose, if a usable one is fresh."""
+        o = self.overhead.usable() if self.overhead else None
+        if o is None:
+            return
+        before = self.pose
+        await self._cmd(
+            "set_pose", {"x": o.x, "y": o.y, "heading_deg": o.heading_deg, "source": "aruco"}
+        )
+        moved = math.hypot(o.x - before.x, o.y - before.y)
+        dh = wrap_deg(o.heading_deg - before.heading_deg)
+        self.db.event(
+            "pose",
+            f"{station_id}: ArUco correction {moved * 100:.1f} cm, {dh:+.1f}° "
+            f"(reproj {o.reproj_err_px:.1f} px)",
+            data={"dx": o.x - before.x, "dy": o.y - before.y, "dh_deg": dh},
+        )
 
     async def _go_to(self, x: float, y: float) -> None:
         p = self.pose

@@ -47,8 +47,9 @@ class FakeDb:
 class Rig:
     """Stub rover + link + FSM, torn down with the event loop."""
 
-    def __init__(self, r, vision=None, mapper=None):
+    def __init__(self, r, vision=None, mapper=None, overhead=None):
         self.r, self.vision, self.mapper = r, vision or StubVision(), mapper or StubMapper()
+        self.overhead = overhead
 
     async def __aenter__(self):
         self.link = RoverLink(self.r.url)
@@ -58,7 +59,7 @@ class Rig:
                 break
             await asyncio.sleep(0.02)
         self.db = FakeDb()
-        self.fsm = RunFSM(self.link, self.vision, self.db, PRIORS, self.mapper)
+        self.fsm = RunFSM(self.link, self.vision, self.db, PRIORS, self.mapper, self.overhead)
         self.run_ended = []
         self.fsm.on_run_ended = self.run_ended.append
         return self
@@ -274,3 +275,43 @@ def test_rover_error_and_vision_down_are_reported():
 
 def test_rocks_fixture_sanity():
     assert len(ROCKS) == 5
+
+
+class FixedOverhead:
+    """Reports the rover 4 cm off its dead-reckoned spot, as if drift had built up."""
+
+    def __init__(self, rover, reproj=0.7):
+        self.rover, self.reproj = rover, reproj
+
+    def usable(self):
+        from marsrover_shared.schemas import OverheadPose
+
+        if self.reproj >= 2.0:  # the real link filters these out
+            return None
+        return OverheadPose(
+            x=self.rover.x + 0.04,
+            y=self.rover.y,
+            heading_deg=self.rover.heading,
+            marker_id=0,
+            reproj_err_px=self.reproj,
+            visible=True,
+        )
+
+
+def test_aruco_resets_pose_before_each_station():
+    async def go():
+        async with StubRover() as r:
+            async with Rig(r, overhead=FixedOverhead(r)) as g:
+                await g.fsm.start_mission({**MISSION, "k": 1}, IdGen())
+                assert len(r.pose_resets) == 5 and all(s[3] == "aruco" for s in r.pose_resets)
+                stations = [i for i, op in enumerate(r.ops) if op == "station"]
+                assert all(r.ops[i - 1] == "set_pose" for i in stations)
+                notes = [m for k, _, m in g.db.events if k == "pose"]
+                assert len(notes) == 5 and "ArUco correction 4.0 cm" in notes[0]
+                assert g.fsm.state == "DONE"
+        async with StubRover() as r:
+            async with Rig(r, overhead=FixedOverhead(r, reproj=3.0)) as g:
+                await g.fsm.start_mission({**MISSION, "k": 1}, IdGen())
+                assert not r.pose_resets and "set_pose" not in r.ops
+
+    run(go())
