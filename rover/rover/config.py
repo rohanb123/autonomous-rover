@@ -34,17 +34,23 @@ class CalibError(ValueError):
 
 @dataclass(frozen=True)
 class Pins:
-    """BCM pin numbers, docs/01 section 4. STBY LOW = motors off is the safety default."""
+    """BCM pin numbers for the L293D and the two scoop servos.
 
-    pwm_a: int
-    ain1: int
-    ain2: int
-    pwm_b: int
-    bin1: int
-    bin2: int
-    stby: int
+    The L293D has no STBY: its enable pins are the equivalent, and EN low puts the outputs
+    in high-impedance so the motors coast. That is the safety-off state.
+    """
+
+    en1: int  # L293D pin 1  -- left PWM *and* enable
+    in1: int  # L293D pin 2  -- left direction
+    in2: int  # L293D pin 7  -- left direction
+    en2: int  # L293D pin 9  -- right PWM and enable
+    in3: int  # L293D pin 10 -- right direction
+    in4: int  # L293D pin 15 -- right direction
     led: int
     pwm_hz: int
+    # Servos hang straight off the Pi now, not a PCA9685. Defaulted so an older calib loads.
+    servo_shoulder: int = 18
+    servo_wrist: int = 19
 
 
 @dataclass(frozen=True)

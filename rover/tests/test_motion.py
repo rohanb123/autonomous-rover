@@ -144,22 +144,22 @@ def test_drive_backwards_goes_backwards():
     motion, _, pins, _, _ = build()
     pose = motion.drive(-0.2, 0.5)
     assert pose.x == pytest.approx(-0.2, abs=1e-6)
-    assert first(pins, "out", PINS.ain1) is False, "AIN1 low, AIN2 high is reverse"
-    assert first(pins, "out", PINS.ain2) is True
+    assert first(pins, "out", PINS.in1) is False, "IN1 low, IN2 high is reverse"
+    assert first(pins, "out", PINS.in2) is True
 
 
 def test_drive_ends_stopped():
     motion, _, pins, _, _ = build()
     motion.drive(0.2, 0.5)
-    assert pins.last("pwm", PINS.pwm_a) == 0.0
-    assert pins.last("out", PINS.stby) is False
+    assert pins.last("pwm", PINS.en1) == 0.0
+    assert pins.last("pwm", PINS.en1) == 0.0
 
 
 def test_speed_is_clamped_to_the_usable_band():
     """Below min_speed the gearmotors buzz instead of turning, so asking for 0.01 gets 0.15."""
     motion, _, pins, _, _ = build()
     motion.drive(0.1, 0.01)
-    assert first(pins, "pwm", PINS.pwm_a) == pytest.approx(CALIB.motion.min_speed)
+    assert first(pins, "pwm", PINS.en1) == pytest.approx(CALIB.motion.min_speed)
 
 
 def test_a_cooperative_stop_shortens_the_drive_without_an_error():
@@ -283,10 +283,10 @@ def test_a_timed_turn_spins_the_wheels_opposite_ways():
     motion, _, pins, _, _ = build()
     motion.turn(90.0, 0.5)
     # CCW positive: the left wheel reverses while the right drives forward.
-    assert first(pins, "out", PINS.ain1) is False
-    assert first(pins, "out", PINS.ain2) is True
-    assert first(pins, "out", PINS.bin1) is True
-    assert first(pins, "out", PINS.bin2) is False
+    assert first(pins, "out", PINS.in1) is False
+    assert first(pins, "out", PINS.in2) is True
+    assert first(pins, "out", PINS.in3) is True
+    assert first(pins, "out", PINS.in4) is False
 
 
 def test_turn_with_a_gyro_closes_the_loop():
@@ -313,7 +313,7 @@ def test_a_dead_gyro_hits_the_ceiling_instead_of_spinning_forever():
     ceiling = (90.0 / w) * 2.5 + 1.0
     assert clock.t == pytest.approx(ceiling, abs=0.05)
     assert pose.heading_deg == pytest.approx(0.0, abs=1e-6), "it never actually turned"
-    assert pins.last("out", PINS.stby) is False
+    assert pins.last("pwm", PINS.en1) == 0.0
 
 
 def test_gyro_turn_gain_scales_the_integration():
@@ -347,7 +347,7 @@ def test_stop_halts_and_reports_the_current_pose():
     pins.clear()
     reported = motion.stop()
     assert reported == pose.current()
-    assert pins.last("out", PINS.stby) is False
+    assert pins.last("pwm", PINS.en1) == 0.0
     assert motion.stopping is True
     motion.clear_stop()
     assert motion.stopping is False

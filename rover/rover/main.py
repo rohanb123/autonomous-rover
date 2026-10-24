@@ -64,10 +64,19 @@ from rover.motors import (  # noqa: E402
     MotorsUnavailable,
     NullPins,
     RecordingPins,
+    motor_pins,
 )
 from rover.pose import PoseEstimator  # noqa: E402
 from rover.safety import Safety  # noqa: E402
-from rover.servos import Servos, ServosUnavailable, Smbus2Bus  # noqa: E402
+from rover.servos import (  # noqa: E402
+    GpioServos,
+    Pca9685Servos,
+    ServoDriver,
+    ServosUnavailable,
+    Smbus2Bus,
+    no_servos,
+    servo_pins,
+)
 from rover.ws_server import EventBus, OpError  # noqa: E402
 
 log = logging.getLogger("rover")
@@ -101,8 +110,9 @@ def make_motors(mode: str, calib: Calib) -> Motors:
         return Motors(calib.pins, backend=NullPins(), **kwargs)
     if mode == "sim":
         return Motors(calib.pins, backend=RecordingPins(), **kwargs)
+    pwm, out = motor_pins(calib.pins)
     try:
-        return Motors(calib.pins, backend=GpioZeroPins(calib.pins), **kwargs)
+        return Motors(calib.pins, backend=GpioZeroPins(pwm, out), **kwargs)
     except MotorsUnavailable as e:
         if mode == "gpio":
             raise
@@ -110,18 +120,25 @@ def make_motors(mode: str, calib: Calib) -> Motors:
         return Motors(calib.pins, backend=NullPins(), **kwargs)
 
 
-def make_servos(mode: str, calib: Calib) -> Servos:
+def make_servos(mode: str, calib: Calib) -> ServoDriver:
+    """`auto` means GPIO: the two scoop servos hang straight off the Pi now.
+
+    `pca9685` is the escape hatch if software-PWM jitter spoils the scoop -- the driver is
+    still here and still tested, so switching is a flag rather than a rewrite.
+    """
     cfg = calib.servos
     if mode == "off":
-        return Servos(calib.i2c.pca9685_addr, cfg.freq_hz, None, limits_us=cfg.limits_us)
-    try:
+        return no_servos(cfg)
+    if mode == "pca9685":
         bus = Smbus2Bus(calib.i2c.bus)
-        return Servos(calib.i2c.pca9685_addr, cfg.freq_hz, bus, limits_us=cfg.limits_us)
+        return Pca9685Servos(calib.i2c.pca9685_addr, cfg.freq_hz, bus, limits_us=cfg.limits_us)
+    try:
+        return GpioServos(servo_pins(calib.pins, cfg), cfg.freq_hz, limits_us=cfg.limits_us)
     except ServosUnavailable as e:
-        if mode == "pca9685":
+        if mode == "gpio":
             raise
-        log.warning("servos: no PCA9685 (%s); continuing with none attached", e)
-        return Servos(calib.i2c.pca9685_addr, cfg.freq_hz, None, limits_us=cfg.limits_us)
+        log.warning("servos: no GPIO (%s); continuing with none attached", e)
+        return no_servos(cfg)
 
 
 def make_imu(mode: str, calib: Calib) -> None:
@@ -169,7 +186,7 @@ class HardwareBackend:
         self,
         calib: Calib,
         motors: Motors,
-        servos: Servos,
+        servos: ServoDriver,
         camera: Camera,
         imu: Any | None = None,
     ) -> None:
@@ -384,7 +401,7 @@ class HardwareBackend:
     def inventory(self) -> dict[str, Any]:
         return {
             "motors": self.motors.present,
-            "servos": self.servos.present,
+            "servos": getattr(self.servos, "name", "?") if self.servos.present else False,
             "imu": self.imu is not None,
             "camera": self.camera.backend if self.camera.present else False,
             "exposure_locked": self.camera.exposure_locked,
@@ -440,8 +457,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     p.add_argument(
         "--servos",
-        choices=("auto", "pca9685", "off"),
+        choices=("auto", "gpio", "pca9685", "off"),
         default=env("ROVER_SERVOS", "auto"),
+        help="auto/gpio = straight off the Pi; pca9685 = the I2C fallback",
     )
     p.add_argument(
         "--imu",

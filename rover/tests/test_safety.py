@@ -47,9 +47,9 @@ def build(
 
 
 def stops(pins: RecordingPins) -> int:
-    """How many times stop() ran: each one ends with STBY driven low."""
+    """How many times stop() ran: each one drives enable 1 to a zero duty."""
     return sum(
-        1 for kind, pin, value in pins.writes if kind == "out" and pin == PINS.stby and not value
+        1 for kind, pin, value in pins.writes if kind == "pwm" and pin == PINS.en1 and not value
     )
 
 

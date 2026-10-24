@@ -15,16 +15,22 @@ contract_version: "1.4.0"   # docs/00 section 0. A bump should fail loudly here,
                             # on the rover's wire or uploads moved.
 calibrated_at: null         # ISO-8601 of the last calibrate_*.py run. null = nothing is measured.
 
-pins:                       # BCM numbering, docs/01 section 4
-  pwm_a: 12                 # TB6612 PWMA -- left motor speed (hardware-PWM capable)
-  ain1: 5                   # TB6612 AIN1
-  ain2: 6                   # TB6612 AIN2
-  pwm_b: 13                 # TB6612 PWMB -- right motor speed
-  bin1: 20                  # TB6612 BIN1
-  bin2: 21                  # TB6612 BIN2
-  stby: 26                  # TB6612 STBY -- LOW = motors off, the safety default
+pins:                       # BCM numbering. Motor driver is an L293D, not a TB6612.
+  # docs/01 section 4 still describes the TB6612 + PCA9685 stack; a request is open to P1
+  # (docs/requests/2026-10-24-P2-to-P1-harness-imu-and-pinout.md). This block is the
+  # as-built harness, and rover/tests/test_config.py pins it so it cannot drift unnoticed.
+  en1: 12                   # L293D pin 1  -- left PWM and enable
+  in1: 5                    # L293D pin 2  -- left direction
+  in2: 6                    # L293D pin 7  -- left direction
+  en2: 13                   # L293D pin 9  -- right PWM and enable
+  in3: 20                   # L293D pin 10 -- right direction
+  in4: 21                   # L293D pin 15 -- right direction
   led: 22                   # LED via 330 ohm
-  pwm_hz: 1000              # UNVERIFIED: TB6612 PWM frequency. Pi 5 -> lgpio software PWM.
+  pwm_hz: 1000              # UNVERIFIED: L293D PWM frequency. Pi 5 -> lgpio software PWM.
+  servo_shoulder: 18        # straight off the Pi now, no PCA9685. Hardware-PWM capable pin,
+  servo_wrist: 19           # so a dtoverlay can kill software-PWM jitter without rewiring.
+  # L293D pin 16 (logic Vss) needs 4.5-7 V: wire it to the Pi's 5 V pin, NOT 3V3. The
+  # TB6612 was happy at 3.3 V; the L293D will half-work and look like a software bug.
 
 i2c:
   bus: 1

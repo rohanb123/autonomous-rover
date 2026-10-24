@@ -29,17 +29,24 @@ from rover.config import (  # noqa: E402
     parse_calib,
 )
 
-# docs/01-hardware-and-assembly.md section 4, BCM numbering. Doc 01 wins over this table.
+# The as-built harness, BCM numbering: an L293D, and the two scoop servos straight off the
+# Pi. docs/01 section 4 still describes the TB6612 + PCA9685 stack it replaced, and a request
+# is open to P1 (docs/requests/2026-10-24-P2-to-P1-harness-imu-and-pinout.md). Once that
+# lands, doc 01 wins over this table again -- until then this *is* the record, and comparing
+# calib.yaml against it is what stops the code and the harness drifting apart silently.
 DOC01_PINS = {
-    "pwm_a": 12,
-    "ain1": 5,
-    "ain2": 6,
-    "pwm_b": 13,
-    "bin1": 20,
-    "bin2": 21,
-    "stby": 26,
+    "en1": 12,
+    "in1": 5,
+    "in2": 6,
+    "en2": 13,
+    "in3": 20,
+    "in4": 21,
     "led": 22,
+    "servo_shoulder": 18,
+    "servo_wrist": 19,
 }
+# The PCA9685 is no longer in the stack but its address stays for the --servos pca9685
+# fallback; the ADS1115 is still the optional shoulder pot (docs/05 U-4).
 DOC01_I2C = {"pca9685_addr": 0x40, "ads1115_addr": 0x48}
 
 
@@ -58,9 +65,11 @@ def test_the_shipped_calib_yaml_loads():
     assert not c.calibrated, "calibrated_at must stay null until calibrate_*.py has run"
 
 
-def test_pins_match_doc01_section_4(calib: Calib):
+def test_pins_match_the_as_built_harness(calib: Calib):
     actual = {name: getattr(calib.pins, name) for name in DOC01_PINS}
-    assert actual == DOC01_PINS, "calib.yaml pins drifted from docs/01 section 4"
+    assert actual == DOC01_PINS, "calib.yaml pins drifted from the as-built harness"
+    # The L293D has no standby pin; its enables are the hardware-off (see motors.stop()).
+    assert not hasattr(calib.pins, "stby")
     assert calib.i2c.pca9685_addr == DOC01_I2C["pca9685_addr"]
     assert calib.i2c.ads1115_addr == DOC01_I2C["ads1115_addr"]
     # docs/05 U-2: MPU-6050 first, accel-only ADXL345 as the fallback.
@@ -160,8 +169,8 @@ def test_a_missing_section_names_itself(section: str):
 
 def test_a_missing_key_names_itself():
     raw = helpers.calib_dict()
-    raw["pins"] = {k: v for k, v in raw["pins"].items() if k != "stby"}
-    with pytest.raises(CalibError, match="stby"):
+    raw["pins"] = {k: v for k, v in raw["pins"].items() if k != "en1"}
+    with pytest.raises(CalibError, match="en1"):
         parse_calib(raw)
 
 

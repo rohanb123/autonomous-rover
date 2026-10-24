@@ -1,13 +1,27 @@
-"""TB6612FNG drive motors on the Pi's GPIO (docs/01 section 4 pinout).
+"""L293D drive motors on the Pi's GPIO.
 
 Two layers, so everything worth testing runs on a laptop with no GPIO: `Motors` holds the
 trim, clamping, direction logic and the safety latch, and talks to a `PinBackend` that is
-either real `gpiozero` pins or a recording stub.
+either real `gpiozero` pins or a recording stub. `GpioZeroPins` is general (it takes the pins
+and their frequencies), so `servos.py` drives its two channels through the same abstraction.
 
 The one detail to not get wrong: **`inhibit()` before `stop()`**. A long op runs on a worker
 thread and calls `set()` every few milliseconds; stopping the motors without latching them off
 just means the worker re-enables them on its next pass, about 20 ms later. That is docs/05 R14
 ("E-STOP doesn't stop in time"), and it is why `set()` is a no-op while a latch is held.
+
+L293D notes that differ from the TB6612 this replaced:
+
+  * **No STBY.** The enable pins (EN1/EN2, chip pins 1 and 9) are the equivalent, and they are
+    also the PWM inputs. EN low puts a bridge's outputs in high-impedance and the motor
+    coasts -- a genuine hardware disable, which is what `stop()` uses.
+  * **Logic Vss (pin 16) needs 4.5-7 V**, so it goes to the Pi's 5 V pin, not 3V3. Inputs are
+    still fine from 3.3 V GPIO (VIH is 2.3 V). A TB6612 harness reused as-is will half-work.
+  * **Internal clamp diodes** -- that is what the "D" suffix means -- so no external flyback.
+  * **600 mA per channel continuous** (1.2 A peak). A yellow TT gearmotor stalls near
+    1.0-1.6 A, so a jammed wheel will thermally limit the chip rather than burn it. Solder all
+    four GND pins (4, 5, 12, 13) to copper; they are the only heat path. This supersedes
+    docs/05 U-22, which asked the same question about the TB6612.
 
 Pi 5 resolves docs/05 U-1: `gpiozero` with the `lgpio` pin factory. pigpio has no Pi 5
 support (https://github.com/joan2937/pigpio/issues/589).
@@ -17,23 +31,25 @@ from __future__ import annotations
 
 import logging
 import threading
+from collections.abc import Iterable, Mapping
 from typing import Protocol
 
 from rover.config import Pins
 
 log = logging.getLogger("rover.motors")
 
-#: docs/01 section 4, BCM. The authority is calib.yaml (which rover/tests/test_config.py
-#: compares against doc 01); this is here so a reader doesn't have to open the YAML.
+#: The as-built harness, BCM numbering. docs/01 section 4 still describes the TB6612 stack;
+#: a request is open to P1. rover/tests/test_config.py compares calib.yaml against this.
 DOC01_PINS = {
-    "pwm_a": 12,
-    "ain1": 5,
-    "ain2": 6,
-    "pwm_b": 13,
-    "bin1": 20,
-    "bin2": 21,
-    "stby": 26,
+    "en1": 12,
+    "in1": 5,
+    "in2": 6,
+    "en2": 13,
+    "in3": 20,
+    "in4": 21,
     "led": 22,
+    "servo_shoulder": 18,
+    "servo_wrist": 19,
 }
 
 
@@ -42,7 +58,9 @@ class MotorsUnavailable(RuntimeError):
 
 
 class PinBackend(Protocol):
-    """The whole device surface `Motors` needs. Deliberately tiny."""
+    """The whole device surface the GPIO drivers need. Deliberately tiny."""
+
+    present: bool
 
     def pwm(self, pin: int, duty: float) -> None: ...
     def out(self, pin: int, high: bool) -> None: ...
@@ -50,7 +68,7 @@ class PinBackend(Protocol):
 
 
 class NullPins:
-    """Accepts and discards every write. Used when no motor backend was asked for."""
+    """Accepts and discards every write. Used when no backend was asked for."""
 
     present = False
 
@@ -69,7 +87,7 @@ class RecordingPins:
 
     This is what `--motors sim` uses: `Motion.drive` runs its real timing loop, the real
     `Safety` and the real watchdog, and a test can assert the last thing written to the
-    TB6612 was PWM 0 with STBY low. The only fiction is that no current flows.
+    L293D left both enables at zero. The only fiction is that no current flows.
     """
 
     present = True
@@ -98,31 +116,31 @@ class RecordingPins:
 
 
 class GpioZeroPins:
-    """Real pins via gpiozero. Imported lazily so this module loads on a laptop."""
+    """Real pins via gpiozero. Imported lazily so this module loads on a laptop.
+
+    `pwm` maps pin -> frequency, because the motors want ~1 kHz and the servos 50 Hz off the
+    same abstraction. `Motors` and `GpioServos` each build their own instance over their own
+    pins, so nothing has to coordinate a shared claim.
+    """
 
     present = True
 
-    def __init__(self, pins: Pins) -> None:
+    def __init__(self, pwm: Mapping[int, int], out: Iterable[int] = ()) -> None:
         try:
             from gpiozero import DigitalOutputDevice, PWMOutputDevice
         except ImportError as e:  # not installed: rover[pi] extra, docs/00 section 2
             raise MotorsUnavailable(f"gpiozero is not installed: {e}") from e
         self._devices: list[object] = []
         try:
-            self._pwm = {
-                p: PWMOutputDevice(p, frequency=pins.pwm_hz) for p in (pins.pwm_a, pins.pwm_b)
-            }
-            self._out = {
-                p: DigitalOutputDevice(p)
-                for p in (pins.ain1, pins.ain2, pins.bin1, pins.bin2, pins.stby)
-            }
+            self._pwm = {pin: PWMOutputDevice(pin, frequency=hz) for pin, hz in pwm.items()}
+            self._out = {pin: DigitalOutputDevice(pin) for pin in out}
         except Exception as e:  # BadPinFactory, PinPWMUnsupported, pin already in use...
             self.close()
-            raise MotorsUnavailable(f"cannot claim the motor pins: {e}") from e
+            raise MotorsUnavailable(f"cannot claim pins {sorted(pwm)} / {sorted(out)}: {e}") from e
         self._devices = [*self._pwm.values(), *self._out.values()]
 
     def pwm(self, pin: int, duty: float) -> None:
-        self._pwm[pin].value = duty  # type: ignore[attr-defined]
+        self._pwm[pin].value = max(0.0, min(1.0, duty))  # type: ignore[attr-defined]
 
     def out(self, pin: int, high: bool) -> None:
         device = self._out[pin]
@@ -140,8 +158,14 @@ class GpioZeroPins:
         self._devices = []
 
 
+def motor_pins(pins: Pins) -> tuple[dict[int, int], tuple[int, ...]]:
+    """The pin map for a `GpioZeroPins` that drives the L293D (plus the status LED)."""
+    pwm = {pins.en1: pins.pwm_hz, pins.en2: pins.pwm_hz}
+    return pwm, (pins.in1, pins.in2, pins.in3, pins.in4, pins.led)
+
+
 class Motors:
-    """Differential drive over a TB6612. Speeds are -1..1; positive is forward."""
+    """Differential drive over an L293D. Speeds are -1..1; positive is forward."""
 
     def __init__(
         self,
@@ -214,34 +238,49 @@ class Motors:
             if self.invert_right:
                 right = -right
             p = self.pins
-            self._backend.out(p.stby, True)  # TB6612 STBY high = enabled
-            self._side(p.ain1, p.ain2, p.pwm_a, left)
-            self._side(p.bin1, p.bin2, p.pwm_b, right)
+            self._side(p.in1, p.in2, p.en1, left)
+            self._side(p.in3, p.in4, p.en2, right)
             self._last = (left, right)
 
-    def _side(self, in1: int, in2: int, pwm: int, value: float) -> None:
-        """TB6612 truth table: H/L forward, L/H reverse, L/L coast."""
-        if value > 0:
-            self._backend.out(in1, True)
-            self._backend.out(in2, False)
-        elif value < 0:
-            self._backend.out(in1, False)
-            self._backend.out(in2, True)
-        else:
-            self._backend.out(in1, False)
-            self._backend.out(in2, False)
-        self._backend.pwm(pwm, abs(value))
+    def _side(self, in_a: int, in_b: int, enable: int, value: float) -> None:
+        """L293D with EN high: H/L forward, L/H reverse, equal inputs brake.
+
+        The direction pins are set before the enable rises, so a bridge never spends a PWM
+        cycle enabled with an undefined direction.
+        """
+        self._backend.out(in_a, value > 0)
+        self._backend.out(in_b, value < 0)
+        self._backend.pwm(enable, abs(value))
 
     def stop(self) -> None:
-        """Short-brake both motors, then standby. No sleeps: safe on the asyncio loop."""
+        """Enables to zero, so the outputs go high-impedance and the motors coast.
+
+        No sleeps, so this is safe to call from the asyncio loop thread -- which is what lets
+        `estop` land while a worker thread is mid-drive. EN low is the L293D's equivalent of
+        the TB6612's STBY low: a real hardware disable, not just a zero duty cycle.
+        """
         with self._lock:
             p = self.pins
-            self._backend.pwm(p.pwm_a, 0.0)
-            self._backend.pwm(p.pwm_b, 0.0)
-            # IN1 = IN2 = HIGH is TB6612 short brake, and it holds whatever PWM is doing.
-            for pin in (p.ain1, p.ain2, p.bin1, p.bin2):
+            self._backend.pwm(p.en1, 0.0)
+            self._backend.pwm(p.en2, 0.0)
+            # Leave the direction pins in a defined, de-energised state.
+            for pin in (p.in1, p.in2, p.in3, p.in4):
+                self._backend.out(pin, False)
+            self._last = (0.0, 0.0)
+
+    def brake(self) -> None:
+        """Short-brake instead of coasting: equal inputs with the enables held high.
+
+        Stops faster, but dumps the motor's kinetic energy through the L293D at the moment it
+        is least able to take it (600 mA/channel), so `stop()` coasts and this stays opt-in.
+        Not used by the runtime yet.
+        """
+        with self._lock:
+            p = self.pins
+            for pin in (p.in1, p.in2, p.in3, p.in4):
                 self._backend.out(pin, True)
-            self._backend.out(p.stby, False)  # LOW = motors off, the safety default
+            self._backend.pwm(p.en1, 1.0)
+            self._backend.pwm(p.en2, 1.0)
             self._last = (0.0, 0.0)
 
     @property

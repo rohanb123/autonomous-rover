@@ -340,8 +340,8 @@ def test_the_i1_acceptance_killing_the_client_mid_drive_stops_the_motors():
                 assert isinstance(final, Err), final
                 assert final.code == "E_TIMEOUT"
             # The hardware is left safe: braked, standby low, and latched off.
-            assert pins.last("pwm", PINS.pwm_a) == 0.0
-            assert pins.last("out", PINS.stby) is False
+            assert pins.last("pwm", PINS.en1) == 0.0
+            assert pins.last("pwm", PINS.en2) == 0.0
             assert "watchdog" in b.motors.latches
             assert b.state == "IDLE"
         finally:
