@@ -5,8 +5,9 @@ POST /analyze  AnalyzeReq -> AnalysisResult: label + caption + the SIMULATED Bra
 GET  /health   {"ok": true, "model": <embedding model>, "heads": <heads version>}
 
 Started by scripts/dev_up.sh as `uvicorn vision.app:app` from gx10/. The embedding model comes
-from config/models.yaml and the heads from ml/models/heads.joblib (ml/train_heads.py); if either
-is missing the service refuses to start rather than return made-up numbers.
+from config/models.yaml and the heads from ml/models/heads.joblib (or $VISION_HEADS_PATH); if
+either is missing the service refuses to start rather than return made-up numbers. Get both
+with `python ml/setup_models.py` or a bundle from `ml/package_models.py` (docs/03 §7).
 
 /score fetches each crop from its mapper URL. A crop that can't be fetched or decoded is left
 out of the reply (the brain matches results by prop_id) and logged as a warning.
@@ -17,6 +18,7 @@ from __future__ import annotations
 import asyncio
 import io
 import logging
+import os
 import threading
 from contextlib import asynccontextmanager
 from typing import Any, Protocol
@@ -72,7 +74,8 @@ class VisionModels:
     def from_config(cls) -> VisionModels:
         cfg = load_model_config()
         embedder = Embedder.from_config()
-        heads = Heads.load(REPO / cfg["heads_path"], expect_model=embedder.name)
+        heads_path = os.environ.get("VISION_HEADS_PATH") or REPO / cfg["heads_path"]
+        heads = Heads.load(heads_path, expect_model=embedder.name)
         return cls(embedder, heads)
 
     def embed(self, images: list[Image.Image]) -> np.ndarray:

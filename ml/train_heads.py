@@ -30,7 +30,7 @@ from sklearn.model_selection import train_test_split
 
 ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT.parent / "gx10"))
-from vision.heads import CATEGORIES, FORMAT, TERRAINS  # noqa: E402
+from vision.heads import CATEGORIES, CATEGORY_TO_TERRAIN, FORMAT, TERRAINS  # noqa: E402
 
 EMB_DIR = ROOT / "data" / "embeddings"
 OUT_DIR = ROOT / "models"
@@ -156,22 +156,41 @@ def main() -> None:
     ap = argparse.ArgumentParser(description="Train heads on frozen embeddings (docs/03 §4).")
     ap.add_argument("--emb-dir", type=Path, default=EMB_DIR)
     ap.add_argument("--out", type=Path, default=OUT_DIR)
+    ap.add_argument(
+        "--no-ai4mars",
+        action="store_true",
+        help="skip the terrain head (derive terrain from the category head instead)",
+    )
     args = ap.parse_args()
 
     t0 = time.time()
     cmap = yaml.safe_load((ROOT / "class_map.yaml").read_text(encoding="utf-8"))
     msl = load_npz(args.emb_dir / "msl_v21.npz")
-    crops = load_npz(args.emb_dir / "ai4mars_crops.npz")
-    if msl["meta"]["model"] != crops["meta"]["model"]:
-        raise SystemExit(
-            f"embedding models differ: {msl['meta']['model']} vs {crops['meta']['model']}"
-        )
     model = msl["meta"]["model"]
+    crops_path = args.emb_dir / "ai4mars_crops.npz"
+    crops = None
+    if not args.no_ai4mars:
+        if crops_path.exists():
+            crops = load_npz(crops_path)
+            if crops["meta"]["model"] != model:
+                raise SystemExit(f"embedding models differ: {model} vs {crops['meta']['model']}")
+        else:
+            print(f"no {crops_path.name}: terrain will be derived from the category head")
 
     visual, m_vis = train_visual(msl, cmap)
     category, m_cat = train_category(msl, cmap)
-    terrain, m_ter = train_terrain(crops)
     version = f"{model.split('/')[0].lower()}+lr-v1"
+    if crops is not None:
+        terrain, m_ter = train_terrain(crops)
+    else:
+        terrain = None
+        version += "+derived-terrain"
+        m_ter = {
+            "mode": "derived",
+            "mapping": CATEGORY_TO_TERRAIN,
+            "note": "no AI4Mars crops at training time; terrain = most likely category mapped "
+            "to a terrain class. Train with ai4mars_crops.npz for a real terrain head.",
+        }
     bundle = {
         "format": FORMAT,
         "version": version,
@@ -198,12 +217,15 @@ def main() -> None:
     print(f"category macro-F1 {m_cat['test_macro_f1']:.3f}  accuracy {m_cat['test_accuracy']:.3f}")
     for name, v in m_cat["per_class"].items():
         print(f"           {name:10s} F1 {v['f1']:.3f}  (n={v['support']})")
-    print(
-        f"terrain  accuracy {m_ter['test_accuracy']:.3f}  "
-        f"macro-F1 {m_ter['test_macro_f1_present_classes']:.3f}"
-    )
-    for name, v in m_ter["per_class"].items():
-        print(f"           {name:10s} F1 {v['f1']:.3f}  (n={v['support']})")
+    if terrain is None:
+        print("terrain  derived from the category head (no AI4Mars terrain head)")
+    else:
+        print(
+            f"terrain  accuracy {m_ter['test_accuracy']:.3f}  "
+            f"macro-F1 {m_ter['test_macro_f1_present_classes']:.3f}"
+        )
+        for name, v in m_ter["per_class"].items():
+            print(f"           {name:10s} F1 {v['f1']:.3f}  (n={v['support']})")
     print(
         f"wrote {args.out / 'heads.joblib'} and metrics.json ({version}) in {time.time() - t0:.0f}s"
     )

@@ -4,11 +4,12 @@ Recomputes predictions from ml/models/heads.joblib and ml/data/embeddings/*.npz 
 that the saved bundle reproduces metrics.json), then prints per-class F1 and confusion matrices.
 The arena hold-out is added by ml/arena_fewshot.py once P1's labeled photos exist.
 
-Usage:  python ml/eval.py
+Usage:  python ml/eval.py [--emb-dir DIR] [--models-dir DIR]
 """
 
 from __future__ import annotations
 
+import argparse
 import json
 import sys
 from pathlib import Path
@@ -34,10 +35,17 @@ def table(title: str, labels: list[str], y: np.ndarray, pred: np.ndarray) -> Non
 
 
 def main() -> None:
+    ap = argparse.ArgumentParser(description="Re-score saved heads on the test splits.")
+    ap.add_argument("--emb-dir", type=Path, default=EMB)
+    ap.add_argument("--models-dir", type=Path, default=ROOT / "models")
+    args = ap.parse_args()
+
     cmap = yaml.safe_load((ROOT / "class_map.yaml").read_text(encoding="utf-8"))
-    msl, crops = np.load(EMB / "msl_v21.npz"), np.load(EMB / "ai4mars_crops.npz")
+    msl = np.load(args.emb_dir / "msl_v21.npz")
+    crops_path = args.emb_dir / "ai4mars_crops.npz"
+    crops = np.load(crops_path) if crops_path.exists() else None
     model = json.loads(str(msl["meta"]))["model"]
-    heads = Heads.load(ROOT / "models" / "heads.joblib", expect_model=model)
+    heads = Heads.load(args.models_dir / "heads.joblib", expect_model=model)
     print(f"heads {heads.name} on {model}")
 
     test = msl["split"] == "test"
@@ -54,10 +62,14 @@ def main() -> None:
     pred = np.array([CATEGORIES.index(max(p, key=p.get)) for p in probs])
     table("category, MSL test", list(CATEGORIES), y, pred)
 
+    if crops is None:
+        print("\nterrain: no ai4mars_crops.npz, nothing to score against")
+        return
     m = crops["split"] == "test"
     y = crops["label"][m].astype(int)
     pred = np.array([TERRAINS.index(t) for t in heads.terrain(crops["emb"][m])])
-    table("terrain, AI4Mars test crops", list(TERRAINS), y, pred)
+    title = "terrain (derived from category)" if heads.terrain_derived else "terrain"
+    table(f"{title}, AI4Mars test crops", list(TERRAINS), y, pred)
 
 
 if __name__ == "__main__":

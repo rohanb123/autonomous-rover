@@ -78,3 +78,17 @@ def test_category_head_missing_a_class_reports_zero(tmp_path):
     probs = Heads(b).category_probs(x[:2])
     assert all(p["pebble"] == 0.0 for p in probs)
     assert all(abs(sum(p.values()) - 1) < 1e-6 for p in probs)
+
+
+def test_terrain_is_derived_from_category_without_a_terrain_head():
+    from ..heads import CATEGORY_TO_TERRAIN
+
+    b = _bundle()
+    b["terrain"] = None
+    h = Heads(b)
+    assert h.terrain_derived
+    x = np.random.default_rng(3).normal(size=(6, 8)).astype(np.float32)
+    expected = [CATEGORY_TO_TERRAIN[max(p, key=p.get)] for p in h.category_probs(x)]
+    assert h.terrain(x) == expected and set(expected) <= set(TERRAINS)
+    assert set(CATEGORY_TO_TERRAIN) == set(CATEGORIES)
+    assert not Heads(_bundle()).terrain_derived
