@@ -60,19 +60,21 @@ All tables `public: true` except `writer`. Every run-scoped table has a btree in
 | Table | PK | Key fields | Written by (reducer) | Read by (dashboard component, [06](06-dashboard.md)) |
 |---|---|---|---|---|
 | `run` | `runId` str | status `active\|done\|aborted`, startedUnix, endedUnix, notes, fused bool | brain `start_run`/`end_run`, mapper `set_run_fused` | RunPicker, TopBar |
-| `mission` | `missionId` str | runId, text, paramsJson, assumptionsJson, status `parsed\|active\|done\|rejected` | brain `upsert_mission` | MissionPanel |
-| `task_queue` | `taskId` str | runId, missionId, kind, ref, seq u32, status, note | brain `upsert_task` | TaskQueuePanel |
+| `mission` | `key` str = `runId\|missionId` | missionId, runId, text, paramsJson, assumptionsJson, status `parsed\|active\|done\|rejected` | brain `upsert_mission` | MissionPanel |
+| `task_queue` | `key` str = `runId\|taskId` | taskId, runId, missionId, kind, ref, seq u32, status, note | brain `upsert_task` | TaskQueuePanel |
 | `pose` | `id` u64 autoInc | runId, tUnix, x, y, headingDeg, source, sigmaXy | brain `insert_pose` (2 Hz) | map trail layer, TimelineScrubber |
-| `keyframe` | `kfId` str | runId, stationId, tUnix, x, y, headingDeg, thumbB64, url | mapper `upsert_keyframe` | KeyframePanel, PinDetailDrawer |
-| `local_map_tile` | `stationId` str | runId, tUnix, x, y, headingDeg, resMPx f64, wPx, hPx, pngB64, url | mapper `upsert_local_tile` | map tiles layer (live) |
+| `keyframe` | `key` str = `runId\|kfId` | kfId, runId, stationId, tUnix, x, y, headingDeg, thumbB64, url | mapper `upsert_keyframe` | KeyframePanel, PinDetailDrawer |
+| `local_map_tile` | `key` str = `runId\|stationId` | stationId, runId, tUnix, x, y, headingDeg, resMPx f64, wPx, hPx, pngB64, url | mapper `upsert_local_tile` | map tiles layer (live) |
 | `global_tile` | `tileId` str (`g_<run>_<ix>_<iy>`) | runId, ix, iy i32, originX, originY, resMPx, wPx, hPx, pngB64, version u32 | mapper `upsert_global_tile` | map tiles layer (replay) |
-| `candidate` | `candId` str | runId, stationId, x, y, score, componentsJson, category, sizeM, status, rank i32 (-1 = not in top-k), reason, thumbUrl, tUnix | brain `upsert_candidate` | TaskQueuePanel (top-k), map pins layer, PinDetailDrawer |
-| `visit` | `visitId` str | runId, candId, x, y, radiusM, outcome, tUnix | brain `mark_visited` | map exclusion layer, PinDetailDrawer |
-| `analysis_record` | `id` u64 autoInc | runId, sampleId (unique idx), candId, visitId, tUnix, imageUrl, label, confidence, caption, scoopHasItem, **assayType, a595, concentration, units, verdict, inLinearRange, standardCurveParams, simulated, seed u32, modelVersion** | brain `add_analysis` | PinDetailDrawer, **BradfordPanel** (P3) |
+| `candidate` | `key` str = `runId\|candId` | candId, runId, stationId, x, y, score, componentsJson, category, sizeM, status, rank i32 (-1 = not in top-k), reason, thumbUrl, tUnix | brain `upsert_candidate` | TaskQueuePanel (top-k), map pins layer, PinDetailDrawer |
+| `visit` | `key` str = `runId\|visitId` | visitId, runId, candId, x, y, radiusM, outcome, tUnix | brain `mark_visited` | map exclusion layer, PinDetailDrawer |
+| `analysis_record` | `id` u64 autoInc | key = `runId\|sampleId` (unique idx), runId, sampleId, candId, visitId, tUnix, imageUrl, label, confidence, caption, scoopHasItem, **assayType, a595, concentration, units, verdict, inLinearRange, standardCurveParams, simulated, seed u32, modelVersion** | brain `add_analysis` | PinDetailDrawer, **BradfordPanel** (P3) |
 | `telemetry` | `id` u64 autoInc | runId, tUnix, state, batteryV (-1 if unknown), cpuTempC, imuJson, scoopPose, uplinkBacklog | brain `insert_telemetry` (1 Hz) | HealthPanel |
 | `rover_status` | `key` str = `"rover"` (single row) | runId, tUnix, state, estop bool, x, y, headingDeg, fsmState, activeCandId, linkOk bool, updatedUnix | brain `upsert_rover_status` (2 Hz) | ConnectionBadge, EStopButton state, HealthPanel, map rover glyph |
 | `event` | `id` u64 autoInc | runId, tUnix, src, level, kind, msg, dataJson | brain/mapper `log_event` | EventLog, TimelineScrubber ticks |
 | `writer` (private) | `identityHex` str | addedUnix, label | `claim_writer`, `add_writer` | — |
+
+**Run-scoped keys (contract 1.4.0).** IDs like `c_0001` restart every run (00 §5), so the tables above whose ids restart are keyed by `key = "<runId>|<id>"`, built inside the reducers. Reducer args are unchanged; without this, a new run's `upsert_*` overwrote an earlier run's row with the same id. Look rows up by `key` (or filter by `runId`), never by the bare id.
 
 ### Bradford assay columns (Steering 2)
 On `analysis_record`; all written in the **same** `add_analysis` call as the placeholder analysis, values copied verbatim from vision `/analyze` → `assay` ([00 §6.7](00-overview-and-contracts.md#67-vision-analyze-brain--vision)):

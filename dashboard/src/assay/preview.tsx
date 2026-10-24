@@ -27,6 +27,7 @@ const CURVE = {
 };
 
 const candidate: Candidate = {
+  key: 'r_20261024_101500|c_0007',
   candId: 'c_0007',
   runId: 'r_20261024_101500',
   stationId: 's_0002',
@@ -46,6 +47,7 @@ const candidate: Candidate = {
 };
 
 const visit: Visit = {
+  key: 'r_20261024_101500|v_0001',
   visitId: 'v_0001',
   runId: candidate.runId,
   candId: candidate.candId,
@@ -59,6 +61,7 @@ const visit: Visit = {
 const analysis: AnalysisRecord = {
   id: 1n,
   runId: candidate.runId,
+  key: 'r_20261024_101500|a_0001',
   sampleId: 'a_0001',
   candId: candidate.candId,
   visitId: visit.visitId,
