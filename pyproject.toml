@@ -7,10 +7,16 @@ extend-exclude = ["dashboard", "spacetimedb", "ml/data", "ml/models", "data"]
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "B", "UP"]
 
+[tool.ruff.lint.isort]
+known-first-party = ["marsrover_shared", "rover", "brain", "vision", "mapper", "overhead"]
+
 [tool.black]
 line-length = 100
 target-version = ["py311"]
 
 [tool.pytest.ini_options]
 testpaths = ["shared/py/tests", "rover/tests", "gx10"]
+# Import from source, not the editable install: macOS can flag .venv/*.pth "hidden",
+# and Python 3.13+ skips hidden .pth files.
+pythonpath = ["shared/py", "rover", "gx10"]
 addopts = "-q"

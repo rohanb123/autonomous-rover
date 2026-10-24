@@ -26,7 +26,8 @@ install-pi:
 # pytest exits 5 when no tests are collected; treat that as a pass while the repo is empty.
 test:
 	$(PY) -m pytest || [ $$? -eq 5 ]
-	cd dashboard && npm test
+	@if [ -d dashboard/node_modules ]; then cd dashboard && npm test; \
+	else echo "skipping dashboard tests (run make install first)"; fi
 
 lint:
 	$(PY) -m ruff check .
