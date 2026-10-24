@@ -28,7 +28,7 @@ CATEGORIES = ("float_rock", "layered", "veined", "sand", "bedrock", "pebble")
 def load_priors(path: Path = PRIORS_PATH) -> dict[str, float]:
     """ChemCam/AEGIS category priors (docs/03). Uniform 1.0 until P3's file exists."""
     if path.exists():
-        return {k: float(v) for k, v in json.loads(path.read_text()).items()}
+        return {k: float(v) for k, v in json.loads(path.read_text(encoding="utf-8")).items()}
     log.warning("no %s yet: using uniform category priors", path)
     return dict.fromkeys(CATEGORIES, 1.0)
 

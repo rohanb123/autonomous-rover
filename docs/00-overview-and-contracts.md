@@ -3,7 +3,7 @@
 > If code disagrees with this file, the code is wrong. Change process: [AGENTS.md §3](../AGENTS.md#3-changing-a-contract).
 
 ## 0. Version
-`CONTRACT_VERSION = 1.2.0` (2026-10-24: removed the Mars delay mode in 1.1.0; mission parsing via Grok in 1.2.0)
+`CONTRACT_VERSION = 1.3.0` (2026-10-24: removed the Mars delay mode in 1.1.0; mission parsing via Grok in 1.2.0; keyframe headings are absolute + mapper `/health` in 1.3.0)
 
 ## 1. System in one page
 
@@ -190,7 +190,7 @@ Travel router **SSID `marsnet`**, subnet `192.168.50.0/24`, gateway `192.168.50.
 | 8080 | Pi | `/snapshot.jpg`, `/stream.mjpg` (debug only) | HTTP | P2 |
 | 8000 | GX10 | brain: `/api/*` REST, `/ws/brain` | HTTP/WS | P4 |
 | 8100 | GX10 | vision `/score` `/analyze` `/health` | HTTP JSON | P3 |
-| 8200 | GX10 | mapper `/ingest/*` `/fuse/*` `/files/*` | HTTP | P3 |
+| 8200 | GX10 | mapper `/ingest/*` `/fuse/*` `/files/*` `/health` | HTTP | P3 |
 | 8300 | GX10 | overhead `/pose` | WebSocket JSON | P2 |
 | 3000 | GX10 | SpacetimeDB standalone (`spacetime start --listen-addr 0.0.0.0:3000`) | HTTP + WS | P4 |
 | 11434 | GX10 | Ollama (optional captions only) | HTTP | P3 (model choice) |
@@ -291,11 +291,13 @@ Parts: `station.json`, `kf_000.jpg … kf_007.jpg`, `bev.png`, `crop_p_XXXX.jpg`
                 "crop":"crop_p_0031.jpg","xy":[1.12,0.21],"size_m":0.028,"contrast":0.41}]
 }
 ```
-`xy` is the mission frame (computed by the Pi from the pose and the BEV homography). Mapper reply: `{"ok":true,"station_id":"s_0002","stored":"/data/runs/r_…/stations/s_0002/","urls":{"bev":"http://192.168.50.10:8200/files/runs/r_…/stations/s_0002/bev.png","crops":{"p_0031":"…"}}}`.
+`xy` is the mission frame (computed by the Pi from the pose and the BEV homography). `keyframes[].heading_deg` is the **absolute mission-frame heading at capture**, wrapped to (-180, 180] like every heading in §4 (not relative to the station's start); the mapper copies it unchanged into `upsert_keyframe`. Mapper reply: `{"ok":true,"station_id":"s_0002","stored":"/data/runs/r_…/stations/s_0002/","urls":{"bev":"http://192.168.50.10:8200/files/runs/r_…/stations/s_0002/bev.png","crops":{"p_0031":"…"}}}`.
 The Pi includes the mapper reply in its `station` `done.result` (`StationResult = station.json + {"mapper": reply}`).
 
 ### 6.5 Sample upload (Pi → mapper `POST /ingest/sample`, multipart)
 Parts: `sample.json` `{run_id, sample_id, cand_id, t, pose}` + `present.jpg`. Reply `{ok, url}`.
+
+**Mapper health:** `GET /health` → `{"ok": true, "stdb": bool}` (`stdb` = the mapper's last reducer write succeeded). The brain polls it for `HealthResp.mapper`, like vision's `/health`.
 
 ### 6.6 Vision `/score` (brain → vision)
 Request `{"run_id":…, "items":[{"prop_id":"p_0031","crop_url":"…","size_m":0.028,"xy":[1.12,0.21]}]}`

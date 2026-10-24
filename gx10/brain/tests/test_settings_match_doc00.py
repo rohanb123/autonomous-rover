@@ -9,7 +9,7 @@ DOC00 = Path(__file__).resolve().parents[3] / "docs" / "00-overview-and-contract
 
 
 def test_run_yaml_matches_doc00_section8():
-    doc = DOC00.read_text()
+    doc = DOC00.read_text(encoding="utf-8")
     m = re.search(
         r"score = ([\d.]+)·novelty \+ ([\d.]+)·visual \+ ([\d.]+)·pickable "
         r"\+ ([\d.]+)·category_score − ([\d.]+)·dist_norm",

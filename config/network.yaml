@@ -14,7 +14,7 @@ services:
   rover_http:   {host: pi,     port: 8080,  paths: [/snapshot.jpg, /stream.mjpg], proto: http, owner: P2}
   brain:        {host: gx10,   port: 8000,  paths: [/api/*, /ws/brain], proto: http+ws, owner: P4}
   vision:       {host: gx10,   port: 8100,  paths: [/score, /analyze, /health], proto: http, owner: P3}
-  mapper:       {host: gx10,   port: 8200,  paths: [/ingest/*, /fuse/*, /files/*], proto: http, owner: P3}
+  mapper:       {host: gx10,   port: 8200,  paths: [/ingest/*, /fuse/*, /files/*, /health], proto: http, owner: P3}
   overhead:     {host: gx10,   port: 8300,  path: /pose, proto: ws,   owner: P2}
   spacetimedb:  {host: gx10,   port: 3000,  db: marsrover, proto: http+ws, owner: P4}
   ollama:       {host: gx10,   port: 11434, proto: http, owner: P3}

@@ -37,7 +37,7 @@ from marsrover_shared.schemas import (
 from marsrover_shared.stdb_http import StdbClient
 
 log = logging.getLogger("brain")
-NETWORK = yaml.safe_load((settings.ROOT / "config" / "network.yaml").read_text())
+NETWORK = yaml.safe_load((settings.ROOT / "config" / "network.yaml").read_text(encoding="utf-8"))
 
 
 def _url(env_key: str, service: str) -> str:
@@ -151,8 +151,7 @@ async def health() -> HealthResp:
         stdb, vision, mapper, overhead = await asyncio.gather(
             _probe(client, settings.env("STDB_URL", "http://192.168.50.10:3000") + "/v1/ping"),
             _probe(client, _url("VISION_URL", "vision") + "/health"),
-            # UNVERIFIED: mapper /health pending the P3→P4 request; any HTTP reply counts as up.
-            _probe(client, _url("MAPPER_URL", "mapper") + "/health", any_reply_ok=True),
+            _probe(client, _url("MAPPER_URL", "mapper") + "/health"),
             _probe(client, _url("OVERHEAD_URL", "overhead"), any_reply_ok=True),
         )
     return HealthResp(

@@ -173,7 +173,7 @@ Unit tests in `rover/tests/`: `test_bev.py` (pixel→xy on a synthetic homograph
 **Ops:** `start_run{run_id}`, `drive{dist_m,speed}`, `turn{deg,speed}`, `stop`, `estop`, `clear_estop`, `set_pose{x,y,heading_deg,source}`, `station{station_id,n_views,step_deg}`, `approach{cand_id,x,y}`, `scoop{sample_id}`, `dump`, `scoop_pose{pose}`, `snapshot`, `heartbeat`.
 **Errors:** `E_ESTOP E_BUSY E_TIMEOUT E_BAD_ARGS E_TILT E_CAMERA E_LOST_TARGET E_UPLOAD E_SCOOP E_INTERNAL`.
 **Telemetry 5 Hz:** `{type:"telemetry", run_id, pose{x,y,heading_deg,source,sigma_xy_m}, state, estop, imu{ax,ay,az,gz_dps}, scoop{pose,us[2]}, cpu_temp_c, queue_len, uplink_backlog}`.
-**Station upload:** `POST /ingest/station` multipart: `station.json` (`run_id, station_id, t, pose, keyframes[{kf_id,file,heading_deg,t}], bev{file,res_m_px,w_px,h_px,frame}, proposals[{prop_id,kf_id,bbox_px,crop,xy,size_m,contrast}]`) + `kf_*.jpg`, `bev.png`, `crop_p_*.jpg`. Reply `{ok, station_id, stored, urls{bev, crops{}}}`.
+**Station upload:** `POST /ingest/station` multipart: `station.json` (`run_id, station_id, t, pose, keyframes[{kf_id,file,heading_deg (absolute mission frame, wrapped),t}], bev{file,res_m_px,w_px,h_px,frame}, proposals[{prop_id,kf_id,bbox_px,crop,xy,size_m,contrast}]`) + `kf_*.jpg`, `bev.png`, `crop_p_*.jpg`. Reply `{ok, station_id, stored, urls{bev, crops{}}}`.
 **Sample upload:** `POST /ingest/sample` multipart: `sample.json {run_id, sample_id, cand_id, t, pose}` + `present.jpg` → `{ok, url}`.
 **Timeouts:** heartbeat every 0.25 s; stop if none for 1.0 s while moving; station ≤ 60 s; approach ≤ 45 s; scoop ≤ 30 s.
 **Overhead:** `{"type":"overhead_pose","t","src":"overhead","x","y","heading_deg","marker_id":0,"reproj_err_px","visible"}` at 10 Hz.

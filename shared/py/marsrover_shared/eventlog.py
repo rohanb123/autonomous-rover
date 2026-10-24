@@ -52,5 +52,7 @@ def read(run_id: str) -> list[EventLogLine]:
     if not path.exists():
         return []
     return [
-        EventLogLine.model_validate(json.loads(ln)) for ln in path.read_text().splitlines() if ln
+        EventLogLine.model_validate(json.loads(ln))
+        for ln in path.read_text(encoding="utf-8").splitlines()
+        if ln
     ]

@@ -57,7 +57,7 @@ class Settings:
 
 @cache
 def load(path: Path = RUN_YAML) -> Settings:
-    raw = yaml.safe_load(path.read_text())
+    raw = yaml.safe_load(path.read_text(encoding="utf-8"))
     w = raw["scoring"]["weights"]
     return Settings(
         scoring=Scoring(
@@ -90,7 +90,7 @@ def load_env(path: Path = ENV_FILE) -> None:
     """Fill os.environ from config/.env without overriding what's already set."""
     if not path.exists():
         return
-    for line in path.read_text().splitlines():
+    for line in path.read_text(encoding="utf-8").splitlines():
         if "=" in line and not line.lstrip().startswith("#"):
             key, value = line.split("=", 1)
             os.environ.setdefault(key.strip(), value.strip())
