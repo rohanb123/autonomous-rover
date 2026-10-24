@@ -71,7 +71,7 @@ flowchart LR
   MAPPER -- "HTTP call reducers" --> STDB
 ```
 
-## Team (MECE ownership: every file, part and wire has exactly one owner)
+## Team (each area has a default owner; anyone may work on any area, with a heads-up)
 
 | Who | Role | Owns |
 |---|---|---|

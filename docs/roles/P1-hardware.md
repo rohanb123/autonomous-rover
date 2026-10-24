@@ -6,6 +6,8 @@
 A rover that drives straight-ish, turns in place, carries a rigid camera mast and a 2-servo scoop that can pick up a 1.5–3 cm pebble, show it to the camera and drop it. Plus the overhead camera stand, ArUco markers and the arena. **It must survive 20+ runs without a brownout or a loose wire.**
 
 ## 2. Scope (you own) / not yours
+> "Not yours" means another person's default area. You may still work on it without asking; warn them first (AGENTS.md §2).
+
 | Yours | Not yours |
 |---|---|
 | Chassis, motors, wheels, both battery packs, kill switch, star ground | Any code (P2 writes `motors.py`, `servos.py`, etc.) |

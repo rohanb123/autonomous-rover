@@ -4,6 +4,8 @@
 Everything that runs **on the Pi**: turn brain commands into safe motion, scoop actions and **station surveys** that produce local maps (keyframes + BEV tile + pose + rock proposals), stored on the SD card and uploaded to the GX10. Plus the **overhead ArUco tracker** on the GX10 and the `fake_rover` mock.
 
 ## 2. Scope
+> "Not yours" means another person's default area. You may still work on it without asking; warn them first (AGENTS.md §2).
+
 | Yours | Not yours |
 |---|---|
 | `rover/**` (all Pi code + calibration), `gx10/overhead/**`, `mocks/fake_rover.py` | Deciding *where* to go or what to sample (brain, P4) |

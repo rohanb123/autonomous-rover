@@ -1,9 +1,11 @@
 # P4: Brain, data & dashboard lead (SW/backend lead)
 
 ## 1. Goal
-Own the **decision loop** and the **single source of truth**: the brain service that turns a mission into a mini science campaign (survey → score → top-k → scoop → log), the SpacetimeDB module, the dashboard app shell and panels, the shared contracts package, and integration. You are also the **integration lead**: you run the milestones in [04](../04-integration-timeline.md) and approve contract changes.
+Own the **decision loop** and the **single source of truth**: the brain service that turns a mission into a mini science campaign (survey → score → top-k → scoop → log), the SpacetimeDB module, the dashboard app shell and panels, the shared contracts package, and integration. You are also the **integration lead**: you run the milestones in [04](../04-integration-timeline.md).
 
 ## 2. Scope
+> "Not yours" means another person's default area. You may still work on it without asking; warn them first (AGENTS.md §2).
+
 | Yours | Not yours |
 |---|---|
 | `gx10/brain/**`, including `voice/` (ASR + NLU) | Vision/ML models and `config/models.yaml` (P3) |
@@ -122,7 +124,7 @@ Commands from the dashboard run in order through the FSM. `stop` and E-STOP skip
 - After every schema change: republish (`--delete-data=always` in dev), rerun `claim_writer`/`add_writer`, regenerate bindings.
 - Rank updates can flood `upsert_candidate`; only write rows whose rank/status changed.
 - Keep `config/run.yaml` and 00 §8 in sync (a test compares them).
-- You approve contract changes; bump `CONTRACT_VERSION` and update every role file's contract copy.
+- Anyone may change a contract (AGENTS.md §3). As integration lead, check that `CONTRACT_VERSION` was bumped and every role file's contract copy was updated.
 
 ## 10. Contracts you need (copies; source of truth = [00](../00-overview-and-contracts.md))
 **Ports:** brain :8000 (yours), STDB :3000 (yours), vision :8100, mapper :8200, overhead WS :8300/pose, Pi WS :8765/rover, Grok `https://api.x.ai/v1`, dashboard :5173.

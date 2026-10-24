@@ -39,5 +39,5 @@ Swap order: fake_mapper → real mapper (I1), fake_vision → real vision (I2), 
 
 ## 4. Daily rhythm
 - Stand-up at every gate (5 min: done / next / blocked).
-- `main` must always run `make test`. Feature branches merge only after the owner's tests pass.
-- A contract change needs a file in `docs/requests/`, P4's OK, a `CONTRACT_VERSION` bump, and updated copies in the role files ([AGENTS.md §3](../AGENTS.md#3-changing-a-contract)).
+- `main` must always run `make test`. A branch merges only after the whole suite passes, whoever wrote it.
+- Anyone may change a contract without approval: bump `CONTRACT_VERSION`, update the role-file copies and announce it ([AGENTS.md §3](../AGENTS.md#3-changing-a-contract)).

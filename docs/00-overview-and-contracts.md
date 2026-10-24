@@ -31,7 +31,9 @@ Every state change is written to SpacetimeDB. The dashboard reads **only** Space
 | Persistent state / history | SpacetimeDB (P4 module) | Services keeping private copies as truth (except Pi local store, which is a buffer + backup) |
 | Images / big files | mapper disk `/data/runs/…` (P3), URLs in DB | Full-res images inline in DB |
 
-## 2. Repo tree and owners (MECE)
+## 2. Repo tree and owners
+
+Owners below are **default owners**: who builds a path and who to ask. Anyone may edit any path without permission; warn the owner when you do ([AGENTS.md §2](../AGENTS.md#2-ownership-default-owners-open-to-everyone)).
 
 ```
 ares-scout/
@@ -44,7 +46,7 @@ ares-scout/
 ├── .gitignore .editorconfig       P4
 ├── .python-version .nvmrc         P4  (3.11, Node 20)
 ├── docs/                          P4 (00, 02, 04, 05, 06, sources, TEAM.md); P1 (01); P3 (03); each Pn owns roles/Pn-*.md
-│   └── requests/                  anyone (cross-owner change requests)
+│   └── requests/                  anyone (optional notes: questions and decisions, not permission)
 ├── config/                        P4 except models.yaml
 │   ├── network.yaml               IPs, ports (mirror of §3)
 │   ├── run.yaml                   scoring weights, radii, k defaults (mirror of §8)
@@ -165,10 +167,10 @@ ares-scout/
 └── data/                          gitignored; runtime (GX10 /data symlink)
 ```
 
-**Seams where two owners meet.** Each one has exactly one rule:
+**Seams where two areas meet.** Conventions, so cross-area work stays consistent:
 - **Contract copies in role docs.** Each Pn owns `roles/Pn-*.md`, **except** its final "contract copies" section. Whoever changes a contract updates those copies (AGENTS.md §3, step 3).
 - **Python deps.** Each service dir has its own `requirements.txt`, owned by that dir's owner. There's no shared GX10 dependency file.
-- **Dashboard deps and styles.** `dashboard/package.json` and `src/styles.css` are P4's. P3 components only *read* the CSS variables, and keep their own styles in `map/map.css` / `assay/assay.css`. If P3 needs an npm dep, they request it in `docs/requests/` (doc 06 aims for no extra deps).
+- **Dashboard deps and styles.** `dashboard/package.json` and `src/styles.css` are P4's. P3 components only *read* the CSS variables, and keep their own styles in `map/map.css` / `assay/assay.css`. If P3 needs an npm dep, they add it (heads-up to P4) (doc 06 aims for no extra deps).
 - **Dashboard ↔ map/assay.** `MapViewProps` and `BradfordPanelProps` (doc 06 §4) are the whole interface. P4 renders the components and passes rows; P3 never opens an STDB connection.
 - **Model config.** `config/models.yaml` (vision/ML models) is P3's, and the only P3 file in `config/`. Voice settings (ASR size, Grok model) live in `config/run.yaml` (P4).
 - **Arena photos.** P1 captures and labels them into `ml/data/arena/`. That's gitignored data, not repo files, in the layout docs/03 defines. P3 owns `arena_fewshot.py`, which consumes them.

@@ -7,10 +7,15 @@
 - Hardware, pinout and power: [docs/01-hardware-and-assembly.md](docs/01-hardware-and-assembly.md).
 - Your own task list: `docs/roles/P<n>-*.md`. Each role doc ends with a **copy** of the contracts it touches. If that copy disagrees with doc 00, **doc 00 wins**; fix the copy.
 
-## 2. Ownership (MECE)
-Every path has exactly one owner (see the tree in doc 00, section 2). **Do not edit files you don't own.** Open a PR or message the owner instead. Agents: if a task needs a change in someone else's path, stop and write the request into `docs/requests/<date>-<from>-to-<owner>.md`.
+## 2. Ownership: default owners, open to everyone
+Every path has a **default owner** (the tree in doc 00, section 2): the person who builds it and knows it best. Ownership says who to ask, not who is allowed.
+- **Anyone may work on anything**: any file, any role's task. No permission is needed from the owner, from P4 or from anyone else, and no request file.
+- **Warn when you cross over.** Before editing a path someone else owns, say so, then go ahead. Agents: tell your human `Heads-up: <path> is <owner>'s (Pn) area` and continue without waiting for an answer. Name the owner in the commit message (e.g. `p4(mapper): … [P3 area]`) and give them a one-line heads-up in team chat so they pull before they edit there.
+- **Don't clobber.** Pull `main` before you start, keep cross-area changes focused, and run the whole `make test` (the owner's tests included) before you push.
+- `docs/requests/` is optional: use it to write down a question or a decision, never to ask permission.
 
 ## 3. Changing a contract
+Anyone may change a contract; no approval needed. Because it affects everyone, do all of these steps:
 1. Edit `docs/00-overview-and-contracts.md` first (and `docs/02` if it touches the DB).
 2. Bump `CONTRACT_VERSION` in doc 00, section 0, and in `shared/py/marsrover_shared/version.py`.
 3. Update `shared/py/marsrover_shared/schemas.py` (P4) and the copies at the bottom of the affected role docs.

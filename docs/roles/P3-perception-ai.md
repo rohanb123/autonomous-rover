@@ -10,6 +10,8 @@ Make the rover **choose like a scientist** and make the result **visible**:
 > ⚠️ Still the heaviest role (voice moved to P4, arena photos to P1). The cut list in [05](../05-unknowns-and-risks.md#risk-register) says what to drop first. If you're behind at I2, P4 takes over `dashboard/src/assay/` as a whole directory.
 
 ## 2. Scope
+> "Not yours" means another person's default area. You may still work on it without asking; warn them first (AGENTS.md §2).
+
 | Yours | Not yours |
 |---|---|
 | `ml/**`, `gx10/vision/**`, `gx10/mapper/**` | Final score formula, heap, route, dedupe, exclusion (brain, P4). You return *components* |

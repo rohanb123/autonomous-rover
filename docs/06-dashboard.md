@@ -2,7 +2,7 @@
 
 **App owner: P4** (shell, routing, STDB connection, brain API client, all panels except the two below).
 **P3 owns** `dashboard/src/map/` (the map canvas and its layers) and `dashboard/src/assay/` (simulated Bradford assay panel).
-Every component below has exactly one owner.
+Every component below has a default owner; anyone may work on any of them, with a heads-up (AGENTS.md §2).
 
 ## 1. Stack
 | Choice | Why |
