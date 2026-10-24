@@ -94,5 +94,5 @@ def test_empty_scoops_omit_assay_and_both_paths_occur(client):
 
 def test_analyze_writes_events_jsonl(client, tmp_path):
     client.post("/analyze", json=_analyze_req(2, 0.2))
-    text = (tmp_path / "runs" / RUN / "events.jsonl").read_text()
+    text = (tmp_path / "runs" / RUN / "events.jsonl").read_text(encoding="utf-8")
     assert text.count('"src":"vision"') == 1

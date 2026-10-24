@@ -186,7 +186,8 @@ def test_fuse_writes_global_tile_and_bumps_version(env):
     tiles = writer.by("upsert_global_tile")
     assert [t[0] for t in tiles] == [f"g_{RUN}_0_0"] * 2
     assert [t[-1] for t in tiles] == [1, 2]
-    _, _, ix, iy, _, _, res, w, h, _, version = tiles[0]
+    _, _, ix, iy, ox, oy, res, w, h, _, version = tiles[0]
+    assert (ox, oy) == (1.28, 1.28)  # top-left corner of a tile centered on home
     assert (ix, iy, res, w, h) == (0, 0, 0.005, 512, 512) and isinstance(version, int)
     assert writer.by("set_run_fused") == [(RUN, True)] * 2
 
@@ -195,5 +196,5 @@ def test_events_jsonl_written(env):
     client, _, root = env
     _, files = _station()
     client.post("/ingest/station", files=files)
-    lines = (root / "runs" / RUN / "events.jsonl").read_text().splitlines()
+    lines = (root / "runs" / RUN / "events.jsonl").read_text(encoding="utf-8").splitlines()
     assert json.loads(lines[0])["kind"] == "station_stored"

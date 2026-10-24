@@ -192,7 +192,7 @@ def create_app(
         rel_dir = f"runs/{run_id}/stations/{sid}"
         out = root / rel_dir
         out.mkdir(parents=True, exist_ok=True)
-        (out / "station.json").write_text(st.model_dump_json(indent=2))
+        (out / "station.json").write_text(st.model_dump_json(indent=2), encoding="utf-8")
         for name, data in files.items():
             (out / name).write_bytes(data)
 
@@ -260,7 +260,7 @@ def create_app(
         rel_dir = f"runs/{run_id}/samples/{sample_id}"
         out = root / rel_dir
         out.mkdir(parents=True, exist_ok=True)
-        (out / "sample.json").write_text(sm.model_dump_json(indent=2))
+        (out / "sample.json").write_text(sm.model_dump_json(indent=2), encoding="utf-8")
         (out / "present.jpg").write_bytes(files["present.jpg"])
         log(run_id, "sample_stored", f"fake mapper stored {sample_id}", {"sample_id": sample_id})
         return SampleReply(ok=True, url=url_for(f"{rel_dir}/present.jpg"))
@@ -270,15 +270,15 @@ def create_app(
         _check_id(run_id, "run_id")
         version = fuse_versions.get(run_id, 0) + 1
         fuse_versions[run_id] = version
-        # UNVERIFIED: (originX, originY) taken as the tile's minimum-x / minimum-y corner.
+        # docs/06 §6: (originX, originY) = mission xy of the top-left pixel corner (max x, max y).
         db(
             "upsert_global_tile",
             f"g_{run_id}_0_0",
             run_id,
             0,
             0,
-            -GLOBAL_HALF_M,
-            -GLOBAL_HALF_M,
+            GLOBAL_HALF_M,
+            GLOBAL_HALF_M,
             GLOBAL_RES_M_PX,
             TILE_MAX_PX,
             TILE_MAX_PX,
