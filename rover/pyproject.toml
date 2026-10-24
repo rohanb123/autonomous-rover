@@ -14,7 +14,9 @@ dependencies = [
   "uvicorn>=0.29",
   "httpx>=0.27",
   "numpy>=1.26",
-  "opencv-python-headless>=4.9",
+  # contrib, not plain: gx10/overhead/requirements.txt (also P2's) needs cv2.aruco, and
+  # `make install` puts both in one venv where two wheels would fight over cv2/.
+  "opencv-contrib-python-headless>=4.9",
   "pyyaml>=6",
 ]
 

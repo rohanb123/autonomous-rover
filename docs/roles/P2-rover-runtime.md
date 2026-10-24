@@ -21,24 +21,45 @@ TB6612 (GPIO 12/5/6 left, 13/20/21 right, STBY 26) · PCA9685 @0x40 (ch0 shoulde
 
 ## 4. Files and function signatures
 ```python
-# rover/rover/config.py
-@dataclass
-class Calib: motor_trim: float; m_per_s_at: dict[float,float]; deg_per_s_at: dict[float,float]
-             homography: list[list[float]]; bev_res_m_px: float; bev_size_px: int
-             scoop_us: dict[str, tuple[int,int]]; scoop_zone_px: tuple[int,int,int,int]; present_roi_px: tuple[int,int,int,int]
-def load_calib(path: str) -> Calib
+# rover/rover/config.py  (BUILT)
+@dataclass(frozen=True)
+class Calib: motor_trim: float; m_per_s_at: Mapping[float,float]; deg_per_s_at: Mapping[float,float]
+             homography: tuple[tuple[float,...],...]; bev_res_m_px: float; bev_size_px: int
+             scoop_us: Mapping[str, tuple[int,int]]; scoop_zone_px: tuple[int,int,int,int]; present_roi_px: tuple[int,int,int,int]
+             # plus nested frozen groups: pins i2c motion camera servos scoop safety pose
+             # plus contract_version, calibrated_at (None until calibrate_*.py runs), source
+class CalibError(ValueError)
+def load_calib(path: str | Path | None = None) -> Calib   # @cache; $ROVER_CALIB; utf-8
+def parse_calib(raw: dict, source: Path | None = None) -> Calib   # no IO, for tests
+def interp(table: Mapping[float,float], speed: float) -> float    # linear, clamps at the ends
 
-# motors.py
+# motors.py  (BUILT)
+class PinBackend(Protocol): pwm(pin, duty); out(pin, high); close()
+class GpioZeroPins   # real, lazy `import gpiozero`; raises MotorsUnavailable
+class RecordingPins  # present=True, records writes -- what `--motors sim` uses
+class NullPins       # present=False, discards
 class Motors:
-    def __init__(self, pins: dict, trim: float): ...
-    def set(self, left: float, right: float) -> None      # -1..1, applies trim; STBY high
-    def stop(self) -> None                                 # brake, STBY low
+    def __init__(self, pins: Pins, trim: float = 0.0, backend: PinBackend | None = None,
+                 *, invert_left: bool = False, invert_right: bool = False): ...
+    def set(self, left: float, right: float) -> None      # -1..1, trim+invert; STBY high
+    def stop(self) -> None                                 # PWM 0, short brake, STBY low
+    def inhibit(self, reason: str) -> None                 # set() is a NO-OP while held
+    def release(self, reason: str) -> None                 # named, independent latches
+    @property inhibited: bool; latches: frozenset[str]; present: bool; last: tuple[float,float]
+# Call inhibit() BEFORE stop(): the op worker calls set() every 20 ms, so an un-latched
+# stop is undone almost immediately (docs/05 R14).
 
-# servos.py
+# servos.py  (BUILT)
+class I2cBus(Protocol): read8; read_block; write8; close   # shared with imu.py
+class Smbus2Bus        # docs/05 U-23 resolved: plain smbus2 register writes, not Blinka
+def prescale_for(freq_hz: float) -> int             # 50 Hz -> 121
+def us_to_ticks(us: float, freq_hz: float) -> int   # 1500 us @ 50 Hz -> 307
 class Servos:
-    def __init__(self, i2c_addr: int = 0x40, freq_hz: int = 50): ...
-    def write_us(self, ch: int, us: int) -> None           # clamps to calib limits
-    def off(self, ch: int) -> None
+    def __init__(self, i2c_addr: int = 0x40, freq_hz: int = 50, bus: I2cBus | None = None,
+                 *, limits_us: tuple[int,int] = (600, 2400), sleep=None): ...
+    def write_us(self, ch: int, us: int) -> None           # clamps to limits_us
+    def off(self, ch: int) -> None; def last_us(self, ch) -> int | None
+    @property present: bool
 
 # scoop.py
 POSES = ("STOW","DEPLOY","CURL","PRESENT","DUMP")
@@ -60,24 +81,39 @@ class Heading:
     def vo_yaw_deg(self, bev_prev, bev_next) -> tuple[float, float]   # (dyaw_deg, inlier_ratio) via cv2.estimateAffinePartial2D
     def fuse(self, gyro_deg: float, vo_deg: float | None, w_vo: float) -> float
 
-# pose.py
+# pose.py  (BUILT)
 class PoseEstimator:
+    def __init__(self, cfg: PoseCfg, pose: Pose | None = None): ...
     def predict_drive(self, dist_m: float) -> Pose
-    def predict_turn(self, dyaw_deg: float) -> Pose
-    def set_pose(self, p: Pose) -> None
-    def current(self) -> Pose
+    def predict_turn(self, dyaw_deg: float) -> Pose            # wraps to (-180, 180]
+    def set_pose(self, p: Pose) -> None                        # resets the sigma growth
+    def current(self) -> Pose                                  # immutable, replaced under a lock
+    def use_gyro(self, available: bool) -> None                # picks "dr" vs "dr+gyro"
 
-# motion.py
+# motion.py  (BUILT)
+class Aborted(RuntimeError)   # .code: ErrCode -- E_ESTOP / E_TIMEOUT / E_TILT
 class Motion:
-    def drive(self, dist_m: float, speed: float) -> Pose            # timed by calib m_per_s; stops on estop
-    def turn(self, deg: float, speed: float) -> tuple[Pose, str]    # gyro-closed if has_gyro else timed
-    def stop(self) -> Pose
+    def __init__(self, motors, pose, calib, imu=None, safety=None,
+                 *, clock=time.monotonic, sleep=time.sleep): ...
+    def drive(self, dist_m: float, speed: float) -> Pose            # timed by calib m_per_s_at
+    def turn(self, deg: float, speed: float) -> tuple[Pose, str]    # gyro-closed else timed
+    def stop(self) -> Pose; def request_stop(self); def clear_stop(self)
+# Blocks on the worker thread, polling every calib.safety.stop_tick_s (20 ms) -- that is the
+# stop-latency budget. The pose integrates ELAPSED time, so a drive that was cut reports
+# where it actually got to. A gyro turn has a wall-clock ceiling, or a dead gyro (reading 0
+# forever) would spin until the heartbeat watchdog happened to notice.
 
-# camera.py
+# camera.py  (BUILT)
+class FrameSource(Protocol): read; set; get; release
+class OpenCvSource      # lazy `import cv2`, MJPG fourcc
+class SyntheticSource   # seeded gradient + dark blobs; `--camera sim`, and proposals tests
+class NullSource        # present=False
 class Camera:
-    def open(self, index: int = 0, w: int = 640, h: int = 480) -> None   # fixed exposure/white balance if supported
-    def grab(self) -> np.ndarray                                         # flush 3 stale frames first
-    def jpeg(self, img, quality: int = 85) -> bytes
+    def open(self, index=None, w=None, h=None) -> None   # locks exposure/WB, then READS IT BACK
+    def grab(self) -> np.ndarray                          # flushes calib.camera.flush_frames
+    def jpeg(self, img, quality: int | None = None) -> bytes
+    @property present: bool
+    exposure_locked: bool   # docs/05 U-21: did the driver honour it? verified, not assumed
 
 # bev.py
 def warp_to_bev(img: np.ndarray, H: np.ndarray, size_px: int) -> np.ndarray
@@ -107,15 +143,44 @@ class Uploader:
     def upload_sample(self, path: str) -> dict
     def retry_loop(self) -> None                               # background; exponential backoff, max 30 s
 
-# safety.py
+# safety.py  (BUILT)
+def tilt_deg(imu: dict) -> float   # atan2(hypot(ax,ay), az), so upside-down reads ~180 not ~0
 class Safety:
-    def on_heartbeat(self) -> None
-    def tick(self) -> None                                     # 20 Hz: no heartbeat for 1.0 s while moving → stop
+    def __init__(self, motors, moving: Callable[[], bool], *, clock=time.monotonic,
+                 imu_read=None, on_event=None, heartbeat_timeout_s=1.0,
+                 tilt_limit_deg=35.0, tilt_clear_ticks=5): ...
+    def on_heartbeat(self) -> None                             # also releases the watchdog latch
+    def tick(self) -> None                                     # 20 Hz: heartbeat + tilt cutoffs
     def estop(self) -> None; def clear(self) -> None; def latched(self) -> bool
-    def tilt_ok(self, imu: dict) -> bool                       # |tilt| > 35° → stop + event "tilt"
+    def tilt_ok(self, imu: dict | None) -> bool                # True when we cannot tell
+    def take_cut(self) -> ErrCode | None                       # the cut that just fired, once
+    def stop_reason(self) -> str | None
+# The latches clear differently: "estop" only on clear_estop, "watchdog" on the next
+# heartbeat (so a reconnecting brain just resumes), "tilt" after N consecutive safe reads.
 
-# ws_server.py
-async def handle(ws) -> None   # parse cmd (pydantic), ack ≤ 0.5 s, run op in a worker, send done/err; telemetry task 5 Hz
+# ws_server.py  (BUILT -- the ONLY implementation of doc 00 section 6.2. mocks/fake_rover.py
+#                 imports it and injects a simulated backend, so both share one dispatch and
+#                 rover/tests/test_protocol.py certifies the code that actually ships.)
+class Backend(Protocol)   # telemetry/state/estopped, attach/detach, the immediate ops, the
+                          # long ops as `async def`, on_heartbeat/watchdog_tick/request_stop
+class OpError(Exception)  # .code: ErrCode -> an `err` frame
+class OpSlot              # one long op at a time; a second gets E_BUSY
+class EventBus            # thread-safe emit (call_soon_threadsafe when off the loop)
+class Session             # reader + ack <= 0.5 s + dispatch, 5 Hz telemetry, 20 Hz watchdog
+def make_handler(backend: Backend, path: str = "/rover") -> Callable
+def serve_rover(backend: Backend, host: str, port: int)
+# websockets + pydantic + stdlib ONLY: no cv2/numpy/gpiozero may reach this module, or
+# fake_rover stops being runnable on a teammate's laptop. test_ws_server.py asserts it.
+
+# main.py  (BUILT) -- entry point
+class HardwareBackend     # implements Backend over motors/servos/camera/imu; long ops run on
+                          # one ThreadPoolExecutor worker, stops come from the loop thread
+def build_backend(calib: Calib, modes: dict[str, str]) -> HardwareBackend
+#   python rover/rover/main.py --motors {auto,gpio,sim,off} --servos {auto,pca9685,off}
+#                              --imu {auto,off} --camera {auto,opencv,sim,off} --no-hw
+#   Device choice is CLI/env, never calib.yaml: calibration is measured numbers that are the
+#   same on every machine, while which devices exist differs per machine and per hour.
+#   `auto` probes, logs an inventory and degrades to off; `sim` must be asked for.
 
 # gx10/overhead/aruco_tracker.py
 class ArucoTracker:

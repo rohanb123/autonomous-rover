@@ -11,6 +11,9 @@ from __future__ import annotations
 
 from typing import Any
 
+# Re-exported (PEP 484 explicit form) so tests and `--motors sim` share one stub.
+from rover.motors import RecordingPins as RecordingPins
+
 # --- time --------------------------------------------------------------------------------
 
 
@@ -32,40 +35,6 @@ class FakeClock:
         """Stand-in for time.sleep that advances the clock instead of blocking."""
         self.slept.append(dt)
         self.t += dt
-
-
-# --- motors ------------------------------------------------------------------------------
-
-
-class RecordingPins:
-    """A PinBackend that remembers every write, so tests can assert on the TB6612 sequence."""
-
-    def __init__(self) -> None:
-        self.writes: list[tuple[str, int, float | bool]] = []
-        self.closed = False
-
-    def pwm(self, pin: int, duty: float) -> None:
-        self.writes.append(("pwm", pin, duty))
-
-    def out(self, pin: int, high: bool) -> None:
-        self.writes.append(("out", pin, high))
-
-    def close(self) -> None:
-        self.closed = True
-
-    # --- assertions ----------------------------------------------------------------------
-
-    def last(self, kind: str, pin: int) -> float | bool | None:
-        for k, p, v in reversed(self.writes):
-            if k == kind and p == pin:
-                return v
-        return None
-
-    def kinds(self) -> list[str]:
-        return [f"{k}{pin}" for k, pin, _ in self.writes]
-
-    def clear(self) -> None:
-        self.writes.clear()
 
 
 # --- I2C ---------------------------------------------------------------------------------
