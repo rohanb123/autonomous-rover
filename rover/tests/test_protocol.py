@@ -812,6 +812,9 @@ def test_fail_rate_zero_never_fails_approach():
 
 
 def test_speed_scale_shortens_a_drive():
+    """0.9 m at speed 1.0 is 3 s of simulated time; --speed-scale divides the wall clock."""
+    sim_s = 0.9 / fake_rover.DRIVE_MPS
+
     async def timed(scale: float) -> float:
         async with rover(fake_rover.Options(speed_scale=scale, no_upload=True)) as (link, _):
             loop = asyncio.get_running_loop()
@@ -820,8 +823,12 @@ def test_speed_scale_shortens_a_drive():
             return loop.time() - t0
 
     slow, fast = run(timed(4.0)), run(timed(16.0))
-    assert fast < slow, f"scale 16 took {fast:.2f} s, scale 4 took {slow:.2f} s"
-    assert 1.8 < slow / fast < 8.0, f"ratio {slow / fast:.2f} should track the 4x scale change"
+    # Absolute: both finish well inside the un-scaled duration. Relative: 16x beats 4x.
+    # The ratio is bounded loosely because the OS timer floor, not the scale, sets the
+    # per-slice cost on a loaded machine.
+    assert fast < sim_s / 2, f"scale 16 took {fast:.2f} s of a {sim_s:.1f} s simulated drive"
+    assert slow < sim_s, f"scale 4 took {slow:.2f} s of a {sim_s:.1f} s simulated drive"
+    assert 1.5 < slow / fast < 10.0, f"ratio {slow / fast:.2f} should track the 4x change"
 
 
 def test_noise_perturbs_the_pose_and_the_imu():
