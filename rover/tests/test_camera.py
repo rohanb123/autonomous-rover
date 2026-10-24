@@ -17,6 +17,7 @@ The assertions that earn their keep:
 
 from __future__ import annotations
 
+import io
 import sys
 from pathlib import Path
 from typing import Any
@@ -37,6 +38,7 @@ from rover.camera import (  # noqa: E402
     OpenCvSource,
     Picamera2Source,
     SyntheticSource,
+    lores_size,
     open_source,
 )
 from rover.config import parse_calib  # noqa: E402
@@ -66,6 +68,7 @@ class FakePicam2:
         exposure_quantum_us: int = 100,
         honour_exposure: bool = True,
         fail_capture: bool = False,
+        encoder_fails: bool = False,
     ) -> None:
         self.camera_controls = dict.fromkeys(controls, (0, 0, 0))
         self.applied: dict[str, Any] = {}
@@ -77,10 +80,18 @@ class FakePicam2:
         self._quantum = exposure_quantum_us
         self._honour = honour_exposure
         self._fail = fail_capture
+        self._encoder_fails = encoder_fails
+        self.encoders: list[tuple[Any, Any, str | None]] = []
+        self.encoder_stops = 0
 
     # --- configuration ---
-    def create_video_configuration(self, main: dict[str, Any]) -> dict[str, Any]:
-        return {"main": dict(main), "kind": "video"}
+    def create_video_configuration(
+        self, main: dict[str, Any], lores: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
+        config: dict[str, Any] = {"main": dict(main), "kind": "video"}
+        if lores is not None:
+            config["lores"] = dict(lores)
+        return config
 
     def create_still_configuration(self, main: dict[str, Any]) -> dict[str, Any]:
         return {"main": dict(main), "kind": "still"}
@@ -104,6 +115,14 @@ class FakePicam2:
         import numpy as np
 
         assert self.configured is not None
+        if stream == "lores":
+            if "lores" not in self.configured:
+                raise RuntimeError("no lores stream configured")
+            w, h = self.configured["lores"]["size"]
+            # Planar YUV420 is (h * 3/2, w): a full-size Y plane then quarter-size U and V.
+            yuv = np.full((h * 3 // 2, w), 128, dtype=np.uint8)
+            yuv[:h, :] = 180  # a mid-grey Y plane
+            return yuv
         w, h = self.configured["main"]["size"]
         frame = np.zeros((h, w, 3), dtype=np.uint8)
         frame[:, :, 0] = 200  # channel 0 bright: BGR means this is BLUE
@@ -128,6 +147,15 @@ class FakePicam2:
     def autofocus_cycle(self) -> bool:
         self.af_cycles += 1
         return True
+
+    # --- encoder ---
+    def start_encoder(self, encoder: Any, output: Any, name: str | None = None) -> None:
+        if self._encoder_fails:
+            raise RuntimeError("no encoder available")
+        self.encoders.append((encoder, output, name))
+
+    def stop_encoder(self) -> None:
+        self.encoder_stops += 1
 
 
 def csi(**kwargs) -> tuple[Picamera2Source, FakePicam2]:
@@ -460,3 +488,170 @@ def test_the_null_source_never_pretends():
     assert null.lock_exposure(CFG) == (False, False)
     assert null.focus(0.2) is False
     assert null.metadata() == {}
+
+
+# --- the lores stream (doc 00 section 3, :8080 debug only) ---------------------------------
+
+
+def test_both_streams_are_declared_in_one_configuration():
+    """Picamera2() can only be claimed once, and streams are fixed at configure() time.
+
+    If `lores` is not declared here, a snapshot server has to either open a second camera
+    (which fails outright) or steal frames from `main` and stutter every station grab.
+    """
+    source, fake = csi()
+    assert fake.configured is not None
+    assert "main" in fake.configured and "lores" in fake.configured
+    assert fake.configured["lores"]["size"] == (320, 240)
+    # picamera2 refuses anything but YUV420 for lores: it is the ISP's downscale output.
+    assert fake.configured["lores"]["format"] == "YUV420"
+    assert source.lores == (320, 240)
+
+
+@pytest.mark.parametrize(
+    "main, want_lores, lores_w",
+    [
+        ((640, 480), (320, 240), 320),  # the default: exactly half
+        ((1280, 720), (320, 180), 320),  # 16:9 main -> 16:9 lores, not 4:3
+        ((640, 480), (160, 120), 160),
+        ((320, 240), (320, 240), 640),  # clamped: lores may not exceed main
+        ((641, 481), (320, 240), 321),  # odd numbers rounded down; YUV420 subsamples 2x2
+    ],
+    ids=["default", "16:9", "small", "clamped", "odd"],
+)
+def test_lores_is_snapped_to_something_picamera2_accepts(main, want_lores, lores_w):
+    cfg = parse_calib(
+        helpers.calib_dict(camera={"width": main[0], "height": main[1], "lores_width": lores_w})
+    ).camera
+    assert lores_size(cfg) == want_lores
+    w, h = want_lores
+    assert w % 2 == 0 and h % 2 == 0
+    assert w <= main[0] and h <= main[1]
+
+
+def test_read_lores_converts_yuv420_to_bgr():
+    pytest.importorskip("cv2")
+    source, _ = csi()
+    ok, frame = source.read_lores()
+    assert ok
+    # YUV420 arrives as (h * 3/2, w) planar; BGR comes back as (h, w, 3).
+    assert frame.shape == (240, 320, 3)
+
+
+def test_read_lores_reports_a_failure_rather_than_raising():
+    source, _ = csi(fail_capture=True)
+    assert source.read_lores() == (False, None)
+
+
+# --- the hardware MJPEG encoder -----------------------------------------------------------
+
+
+def test_stream_mjpeg_hands_the_lores_stream_to_the_encoder():
+    """The Pi 5 encodes MJPEG in the ISP; a Python loop would cost ~25% CPU instead."""
+    source, fake = csi()
+    sink = io.BytesIO()
+    assert source.stream_mjpeg(sink, encoder=object()) is True
+    assert source.streaming is True
+    assert len(fake.encoders) == 1
+    _encoder, _output, name = fake.encoders[0]
+    assert name == "lores", "the browser must not be fed off the survey stream"
+
+
+def test_starting_the_stream_twice_is_a_noop():
+    source, fake = csi()
+    assert source.stream_mjpeg(io.BytesIO(), encoder=object()) is True
+    assert source.stream_mjpeg(io.BytesIO(), encoder=object()) is True
+    assert len(fake.encoders) == 1
+
+
+def test_an_encoder_that_will_not_start_degrades_to_false():
+    """False is the caller's cue to loop read_lores() + jpeg() instead."""
+    source, _ = csi(encoder_fails=True)
+    assert source.stream_mjpeg(io.BytesIO(), encoder=object()) is False
+    assert source.streaming is False
+
+
+def test_without_picamera2s_encoder_api_the_stream_declines():
+    monkey = pytest.MonkeyPatch()
+    try:
+        monkey.setitem(sys.modules, "picamera2.encoders", None)
+        source, fake = csi()
+        assert source.stream_mjpeg(io.BytesIO()) is False
+        assert fake.encoders == []
+    finally:
+        monkey.undo()
+
+
+def test_stop_stream_is_idempotent_and_runs_before_close():
+    source, fake = csi()
+    source.stream_mjpeg(io.BytesIO(), encoder=object())
+    source.stop_stream()
+    source.stop_stream()
+    assert fake.encoder_stops == 1 and source.streaming is False
+    # release() must stop the encoder before closing, or picamera2 complains.
+    source.stream_mjpeg(io.BytesIO(), encoder=object())
+    source.release()
+    assert fake.encoder_stops == 2 and fake.closed is True
+
+
+# --- the lores stream through Camera ------------------------------------------------------
+
+
+def test_grab_lores_does_not_flush_or_settle(monkeypatch):
+    """A live view wants the newest frame; grab() wants a clean one. Opposite trade-offs."""
+    pytest.importorskip("cv2")
+    slept: list[float] = []
+    monkeypatch.setattr("rover.camera.time.sleep", slept.append)
+    camera = Camera(CFG, Picamera2Source(CFG, FakePicam2()))
+    camera.exposure_locked = False  # grab() would settle here; grab_lores() must not
+    frame = camera.grab_lores()
+    assert frame.shape == (240, 320, 3)
+    assert slept == []
+
+
+def test_grab_lores_without_a_camera_is_loud():
+    camera = Camera(CFG, NullSource())
+    with pytest.raises(CameraError, match="nothing to stream"):
+        camera.grab_lores()
+
+
+def test_the_synthetic_source_streams_so_snapshot_server_can_be_built_on_a_laptop():
+    source = SyntheticSource(640, 480)
+    ok, small = source.read_lores()
+    _, full = source.read()
+    assert ok
+    assert small.shape[0] < full.shape[0] and small.shape[1] < full.shape[1]
+    assert small.shape[2] == 3
+
+
+def test_a_usb_camera_has_one_stream_so_lores_is_main():
+    pytest.importorskip("cv2")
+    cap = FakeCap()
+    source = OpenCvSource(0, CFG, cap)
+    ok_lores, lores = source.read_lores()
+    assert ok_lores and cap.reads == 1, "read_lores delegates straight to read"
+    ok_main, main = source.read()
+    assert ok_main and cap.reads == 2
+    assert type(lores) is type(main), "same stream, so the same kind of frame"
+    assert source.stream_mjpeg(io.BytesIO()) is False
+
+
+def test_the_null_source_cannot_stream():
+    null = NullSource()
+    assert null.read_lores() == (False, None)
+    assert null.stream_mjpeg(io.BytesIO()) is False
+
+
+def test_status_reports_the_lores_size():
+    camera = Camera(CFG, Picamera2Source(CFG, FakePicam2()))
+    assert camera.status()["lores"] == [320, 240]
+    assert Camera(CFG, NullSource()).status()["lores"] is None
+
+
+def test_closing_the_camera_stops_the_stream():
+    fake = FakePicam2()
+    camera = Camera(CFG, Picamera2Source(CFG, fake))
+    camera.stream_mjpeg(io.BytesIO(), encoder=object())
+    camera.close()
+    assert fake.encoder_stops >= 1 and fake.closed is True
+    assert camera.backend == "none"

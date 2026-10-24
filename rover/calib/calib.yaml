@@ -80,6 +80,8 @@ camera:
   analogue_gain: 2.0        # UNVERIFIED: needed once AeEnable is false, or frames are dark
   focus_m: 0.8              # survey focus: ground 0.3-1.5 m out. CM3 has autofocus
   present_focus_m: 0.15     # PRESENT close-up; CM3 focuses to ~0.1 m (docs/05 U-7)
+  lores_width: 320          # second CSI stream for :8080 /stream.mjpg (debug only).
+                            # Height follows main's aspect; see rover/rover/camera.py.
 
 servos:
   freq_hz: 50

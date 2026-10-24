@@ -159,6 +159,7 @@ CALIB_DICT: dict[str, Any] = {
         "analogue_gain": 2.0,
         "focus_m": 0.8,
         "present_focus_m": 0.15,
+        "lores_width": 320,
     },
     "servos": {
         "freq_hz": 50,

@@ -22,7 +22,11 @@ Everything the camera is required for, and where it is handled:
     A fixed-focus webcam could only ever have one of them; that is docs/05 U-7.
   * **Approach visual servo** -- repeated `grab()`, which is why the CSI path uses a *video*
     configuration rather than a still one.
-  * **Debug snapshot / analysis upload** -- `jpeg()`.
+  * **Debug snapshot / live stream** on :8080 (doc 00 section 3, debug only) -- the `lores`
+    stream, via `read_lores()` or `stream_mjpeg()`. It is a *second* stream off the same
+    camera claim: `Picamera2()` can only be held once, so a snapshot server cannot open its
+    own, and serving the browser off `main` would stutter every time a station grabs.
+  * **Analysis upload** -- `jpeg()`.
 
 docs/05 U-21 ("does the webcam support manual exposure?") resolves **positively** on this
 hardware: `AeEnable=False` is a real libcamera control rather than a driver-dependent V4L2
@@ -54,6 +58,10 @@ CSI_FORMAT = "RGB888"
 # libcamera AfMode values, as a fallback when `from libcamera import controls` is unavailable.
 AF_MODES = {"Manual": 0, "Auto": 1, "Continuous": 2}
 
+# picamera2 requires the lores stream to be YUV420 -- it is the ISP's hardware-downscaled
+# output, and it will refuse any other format.
+LORES_FORMAT = "YUV420"
+
 
 class CameraError(RuntimeError):
     """The camera is absent, cannot be configured, or a capture failed."""
@@ -72,10 +80,25 @@ class FrameSource(Protocol):
     present: bool
 
     def read(self) -> tuple[bool, Any]: ...
+    def read_lores(self) -> tuple[bool, Any]: ...
     def lock_exposure(self, cfg: CameraCfg) -> tuple[bool, bool]: ...
     def focus(self, distance_m: float | None) -> bool: ...
     def metadata(self) -> dict[str, Any]: ...
+    def stream_mjpeg(self, output: Any, encoder: Any = None) -> bool: ...
+    def stop_stream(self) -> None: ...
     def release(self) -> None: ...
+
+
+def lores_size(cfg: CameraCfg) -> tuple[int, int]:
+    """The lores dimensions picamera2 will actually accept.
+
+    It must be no larger than `main`, even-sized (YUV420 is subsampled 2x2), and sharing
+    main's aspect ratio or the ISP letterboxes it. Fixing that here beats a configure()
+    failure on the Pi, so only the width is configurable and the height follows.
+    """
+    w = min(max(2, cfg.lores_width), cfg.width)
+    h = round(w * cfg.height / cfg.width) if cfg.width else w
+    return max(2, (w // 2) * 2), max(2, (h // 2) * 2)
 
 
 class NullSource:
@@ -87,6 +110,9 @@ class NullSource:
     def read(self) -> tuple[bool, Any]:
         return False, None
 
+    def read_lores(self) -> tuple[bool, Any]:
+        return False, None
+
     def lock_exposure(self, cfg: CameraCfg) -> tuple[bool, bool]:
         return False, False
 
@@ -95,6 +121,12 @@ class NullSource:
 
     def metadata(self) -> dict[str, Any]:
         return {}
+
+    def stream_mjpeg(self, output: Any, encoder: Any = None) -> bool:
+        return False
+
+    def stop_stream(self) -> None:
+        pass
 
     def release(self) -> None:
         pass
@@ -126,6 +158,11 @@ class SyntheticSource:
     def read(self) -> tuple[bool, Any]:
         return True, self._frame.copy()
 
+    def read_lores(self) -> tuple[bool, Any]:
+        """A genuinely smaller frame, so snapshot_server.py can be built on a laptop."""
+        h, w = self._frame.shape[:2]
+        return True, self._frame[:: max(1, h // 240), :: max(1, w // 320)].copy()
+
     def lock_exposure(self, cfg: CameraCfg) -> tuple[bool, bool]:
         # Not a fiction: a generated frame is fixed-exposure and fixed-white-balance by
         # construction, which is the property the survey actually depends on.
@@ -136,6 +173,12 @@ class SyntheticSource:
 
     def metadata(self) -> dict[str, Any]:
         return {"Synthetic": True}
+
+    def stream_mjpeg(self, output: Any, encoder: Any = None) -> bool:
+        return False  # no hardware encoder; the caller loops read_lores() + jpeg()
+
+    def stop_stream(self) -> None:
+        pass
 
     def release(self) -> None:
         pass
@@ -150,6 +193,8 @@ class Picamera2Source:
     def __init__(self, cfg: CameraCfg, picam2: Any = None) -> None:
         self.cfg = cfg
         self.applied: dict[str, Any] = {}
+        self.lores = lores_size(cfg)
+        self.streaming = False
         self._cam = picam2 if picam2 is not None else self._construct()
         self._start()
 
@@ -174,15 +219,29 @@ class Picamera2Source:
             # A *video* configuration: the Module 3 sensor is 11.9 MP and a still
             # configuration re-runs sensor setup on every capture, which would blow the
             # 60 s station budget with 8 keyframes.
+            # TWO streams, declared together, because streams are fixed at configure()
+            # time and Picamera2() can only be claimed once. `main` is the survey frame;
+            # `lores` is the ISP's hardware downscale, for :8080. Without `lores` here, a
+            # snapshot server would have to either open a second camera (which fails) or
+            # steal frames from `main` and stutter every station grab.
             config = self._cam.create_video_configuration(
-                main={"size": (cfg.width, cfg.height), "format": CSI_FORMAT}
+                main={"size": (cfg.width, cfg.height), "format": CSI_FORMAT},
+                lores={"size": self.lores, "format": LORES_FORMAT},
             )
             self._cam.configure(config)
             self._cam.start()
         except Exception as e:
             self.release()
             raise CameraError(f"cannot start the CSI camera: {e}") from e
-        log.info("CSI camera up at %dx%d (%s)", cfg.width, cfg.height, CSI_FORMAT)
+        log.info(
+            "CSI camera up: main %dx%d %s, lores %dx%d %s",
+            cfg.width,
+            cfg.height,
+            CSI_FORMAT,
+            self.lores[0],
+            self.lores[1],
+            LORES_FORMAT,
+        )
 
     # --- capture --------------------------------------------------------------------------
 
@@ -194,10 +253,74 @@ class Picamera2Source:
             return False, None
         return frame is not None, frame
 
+    def read_lores(self) -> tuple[bool, Any]:
+        """The small stream as BGR. It arrives as planar YUV420, so convert it here."""
+        try:
+            yuv = self._cam.capture_array("lores")
+        except Exception as e:
+            log.warning("lores capture failed: %s", e)
+            return False, None
+        if yuv is None:
+            return False, None
+        try:
+            import cv2
+        except ImportError:
+            return True, yuv  # raw YUV420; the caller can still hand it to an encoder
+        code = getattr(cv2, "COLOR_YUV420p2BGR", None)
+        if code is None:  # older OpenCV spells it differently
+            code = cv2.COLOR_YUV2BGR_I420
+        try:
+            return True, cv2.cvtColor(yuv, code)
+        except Exception as e:
+            log.warning("lores YUV420 -> BGR failed: %s", e)
+            return False, None
+
     def metadata(self) -> dict[str, Any]:
         with contextlib.suppress(Exception):
             return dict(self._cam.capture_metadata())
         return {}
+
+    def stream_mjpeg(self, output: Any, encoder: Any = None) -> bool:
+        """Hand `lores` to the ISP's MJPEG encoder, writing into `output`.
+
+        Worth the wiring: the Pi 5 encodes MJPEG in hardware, so a 320x240 stream costs a
+        couple of percent CPU where a Python read-encode-yield loop costs more like 25% --
+        and the rover runtime needs that headroom for stations. Returns False when the
+        encoder API is not available, so a caller can fall back to read_lores() + jpeg().
+
+        `encoder` is injectable because MJPEGEncoder's quality knob differs between
+        picamera2 releases; snapshot_server.py can pass a configured one. UNVERIFIED: not
+        yet exercised against real picamera2 hardware.
+        """
+        if self.streaming:
+            return True
+        if encoder is None:
+            try:
+                from picamera2.encoders import MJPEGEncoder
+            except ImportError:
+                return False
+            encoder = MJPEGEncoder()
+        try:
+            from picamera2.outputs import FileOutput
+
+            target = FileOutput(output)
+        except ImportError:
+            target = output
+        try:
+            self._cam.start_encoder(encoder, target, name="lores")
+        except Exception as e:
+            log.warning("could not start the MJPEG encoder: %s", e)
+            return False
+        self.streaming = True
+        log.info("MJPEG stream up on the lores stream (%dx%d)", *self.lores)
+        return True
+
+    def stop_stream(self) -> None:
+        if not self.streaming:
+            return
+        with contextlib.suppress(Exception):
+            self._cam.stop_encoder()
+        self.streaming = False
 
     # --- controls -------------------------------------------------------------------------
 
@@ -291,6 +414,7 @@ class Picamera2Source:
         cam = getattr(self, "_cam", None)
         if cam is None:
             return
+        self.stop_stream()  # stop the encoder before the camera, or close() complains
         for method in ("stop", "close"):
             with contextlib.suppress(Exception):
                 getattr(cam, method)()
@@ -361,8 +485,18 @@ class OpenCvSource:
     def focus(self, distance_m: float | None) -> bool:
         return False  # a USB webcam is fixed-focus or autofocuses on its own terms
 
+    def read_lores(self) -> tuple[bool, Any]:
+        """A USB camera has one stream, so this *is* main. The caller downscales if it cares."""
+        return self.read()
+
     def metadata(self) -> dict[str, Any]:
         return {}
+
+    def stream_mjpeg(self, output: Any, encoder: Any = None) -> bool:
+        return False  # no ISP encoder to hand it to
+
+    def stop_stream(self) -> None:
+        pass
 
     def release(self) -> None:
         with contextlib.suppress(Exception):
@@ -461,6 +595,27 @@ class Camera:
             raise CameraError("capture failed; the camera may need re-opening")
         return frame
 
+    def grab_lores(self) -> Any:
+        """A frame off the small stream, BGR. No flush and no settle, deliberately.
+
+        This feeds a *live* view, where the newest frame matters more than a clean one --
+        the opposite trade-off from grab(), which must not hand a station a frame from
+        before the turn.
+        """
+        if not self.present:
+            raise CameraError("no camera: nothing to stream")
+        ok, frame = self._source.read_lores()
+        if not ok or frame is None:
+            raise CameraError("lores capture failed")
+        return frame
+
+    def stream_mjpeg(self, output: Any, encoder: Any = None) -> bool:
+        """Start the hardware MJPEG stream. False means "loop grab_lores() + jpeg()"."""
+        return self._source.stream_mjpeg(output, encoder)
+
+    def stop_stream(self) -> None:
+        self._source.stop_stream()
+
     def jpeg(self, img: Any, quality: int | None = None) -> bytes:
         cv2 = OpenCvSource._import_cv2()
         q = self.cfg.jpeg_quality if quality is None else quality
@@ -474,12 +629,14 @@ class Camera:
         return {
             "backend": self.backend,
             "size": [self.cfg.width, self.cfg.height],
+            "lores": list(getattr(self._source, "lores", ())) or None,
             "exposure_locked": self.exposure_locked,
             "white_balance_locked": self.white_balance_locked,
             "focus_locked": self.focus_locked,
         }
 
     def close(self) -> None:
+        self.stop_stream()
         self._source.release()
         self._source = NullSource()
         self.exposure_locked = self.white_balance_locked = self.focus_locked = False

@@ -82,6 +82,7 @@ class CameraCfg:
     analogue_gain: float = 2.0  # with AeEnable off, gain has to be set explicitly
     focus_m: float = 0.8  # survey: ground 0.3-1.5 m out
     present_focus_m: float = 0.15  # the pebble in the scoop (docs/05 U-7)
+    lores_width: int = 320  # second CSI stream, for :8080. Height follows main's aspect
 
 
 @dataclass(frozen=True)
