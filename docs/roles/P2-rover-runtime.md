@@ -89,7 +89,7 @@ def find_rocks(img: np.ndarray, min_area_px: int = 80, max_area_px: int = 8000) 
     # [{bbox_px:[x,y,w,h], contrast: float, solidity: float, center_px:[u,v]}]  Canny → close → findContours → filter
 
 # station.py
-def run_station(station_id: str, n_views: int, step_deg: float) -> dict   # returns station.json dict (00 §6.4)
+def run_station(station_id: str, n_views: int, step_deg: float) -> dict   # returns station.json dict (00 §6.4); keyframes[].heading_deg = absolute mission-frame heading
 
 # approach.py
 def approach(cand_xy: tuple[float,float], timeout_s: float = 45) -> dict  # {in_zone, pose, offset_px}
@@ -127,7 +127,7 @@ class ArucoTracker:
 
 ## 5. How a station works (your core algorithm)
 1. Scoop to STOW. Stop. Settle 0.3 s.
-2. For i in 0..7: grab frame → save `kf_00i.jpg` (+ heading) → BEV warp → proposals on the raw frame → convert each `center_px` → rover xy → mission xy using the current pose → crop 96×96 around the bbox → turn +45° (gyro-closed) → settle 0.3 s.
+2. For i in 0..7: grab frame → save `kf_00i.jpg` (+ its heading: the **absolute mission-frame heading at capture**, wrapped with `wrap_deg`; a station that starts at 30° records 30, 75, 120, …, not 0, 45, 90) → BEV warp → proposals on the raw frame → convert each `center_px` → rover xy → mission xy using the current pose → crop 96×96 around the bbox → turn +45° (gyro-closed) → settle 0.3 s.
 3. Between consecutive BEVs, estimate yaw with `vo_yaw_deg`. If the inlier ratio is > 0.5 and it disagrees with the gyro by < 10°, fuse (w_vo = 0.5). Correct the headings of the views.
 4. `stitch_station` → `bev.png` (rover frame at the station's start heading).
 5. Dedupe proposals within the station (< 0.05 m apart → keep the higher contrast).
@@ -162,6 +162,7 @@ Unit tests in `rover/tests/`: `test_bev.py` (pixel→xy on a synthetic homograph
 - Don't block the asyncio loop with motion or OpenCV; run ops in a worker thread and keep heartbeat/estop handling on the loop.
 - **E-stop must work even while an op runs**: the estop handler sets the latch and calls `Motors.stop()` directly.
 - The scoop must be in STOW before every station (or it's in the photos).
+- **Keyframe `heading_deg` is absolute** (mission frame, wrapped to (-180, 180]), never relative to the station's start (doc 00 §6.4, contract 1.3.0). The mapper copies it straight into the DB; a relative value silently misplaces every keyframe after the first.
 - Station xy depends on heading: a 5° heading error at 1.5 m = 13 cm of target error, which is bigger than the 0.20 m exclusion radius margin you'd like. Fix heading first.
 - The Pi clock must be synced (chrony to the GX10) or replay ordering breaks.
 
