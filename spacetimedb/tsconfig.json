@@ -1,12 +1,14 @@
 {
   "compilerOptions": {
-    "target": "ES2022",
-    "module": "ESNext",
-    "moduleResolution": "Bundler",
     "strict": true,
-    "noEmit": true,
     "skipLibCheck": true,
-    "isolatedModules": true
+    "moduleResolution": "bundler",
+    // Required by SpacetimeDB (from `spacetime init --lang typescript`):
+    "target": "ESNext",
+    "lib": ["ES2021", "dom"],
+    "module": "ESNext",
+    "isolatedModules": true,
+    "noEmit": true
   },
   "include": ["src"]
 }

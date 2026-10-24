@@ -69,14 +69,14 @@ class StdbClient:
         return resp
 
     def call(self, reducer: str, *args: Any) -> None:
-        # UNVERIFIED: positional args map in declaration order (U-11, checked at I0).
+        # Positional args map in declaration order (U-11, verified on v2.13.0).
         self._post(f"/v1/database/{self.db}/call/{reducer}", json=list(args))
 
     def sql(self, query: str) -> list[dict[str, Any]]:
         """Run SQL and return the first statement's rows as dicts. Tests/debug only."""
         resp = self._post(f"/v1/database/{self.db}/sql", content=query.encode())
-        # UNVERIFIED: response shape is
-        #   [{"schema": {"elements": [{"name": {"some": col}}]}, "rows": [...]}]
+        # Response (verified on v2.13.0):
+        #   [{"schema": {"elements": [{"name": {"some": col}, ...}]}, "rows": [[...], ...]}]
         stmts = resp.json()
         if not stmts:
             return []

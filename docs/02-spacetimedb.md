@@ -38,7 +38,7 @@ spacetime logs -s local -f marsrover
 
 ## 3. Naming rules (read this or lose an hour)
 - Table `name` in options is the SQL/HTTP name (we use snake_case). Client accessors are camelCase (`ctx.db.localMapTile`, `tables.localMapTile` ⚠️ check generated `module_bindings/index.ts`).
-- Row fields: declare **camelCase in TS** (`runId`). With the default case-conversion policy the canonical (SQL) name is snake_case (`run_id`). Python HTTP calls pass **positional arrays**, so field names don't matter there; SQL uses `run_id`.
+- Row fields: declare **camelCase in TS** (`runId`). With the default case-conversion policy the canonical (SQL) name is snake_case (`run_id`). ✅ Verified on v2.13.0: **digits get their own underscore**, so `pngB64` → `png_b_64`, `thumbB64` → `thumb_b_64`, `a595` → `a_595` in SQL. Column names can't be overridden (explicit names exist only for tables, functions and indexes), so write SQL with these names. Python HTTP calls pass **positional arrays**, so field names don't matter there; SQL uses `run_id`.
 - Reducer names come from the **export name**. We export snake_case (`insert_pose`) → HTTP path `/call/insert_pose`, TS client `conn.reducers.insertPose({...})` (unused, dashboard is read-only).
 - Index names are verbatim: `<table>_<column>` (e.g. `pose_run_id`). Index names must be unique across the module.
 - **No multi-column index filters** (the rules file reports them broken); filter on `run_id` then in code.
@@ -160,7 +160,7 @@ import spacetimedb from './schema';
 import { t, SenderError } from 'spacetimedb/server';
 
 function requireWriter(ctx: any) {
-  const hex = ctx.sender.toHexString();           // ⚠️ verify server-side Identity has toHexString(); else use isEqual against stored Identity
+  const hex = ctx.sender.toHexString();           // ✅ verified on v2.13.0 (U-12)
   if (!ctx.db.writer.identityHex.find(hex)) throw new SenderError('not a writer');
 }
 
@@ -189,7 +189,7 @@ export const add_analysis = spacetimedb.reducer({
 });
 // … remaining reducers follow the same pattern. No Date.now(), no Math.random() (determinism).
 ```
-Reducer arg order = object key order in the `{...}` params literal. ⚠️ UNVERIFIED that HTTP positional arrays follow declaration order; **I0 test**: call `insert_pose` via HTTP with a positional array and read it back with `spacetime sql`. If it fails, switch `stdb_http.py` to the object form (SATS-JSON allows products as objects keyed by field name, using the canonical snake_case names).
+Reducer arg order = object key order in the `{...}` params literal. ✅ Verified on v2.13.0 (U-11): HTTP positional arrays follow declaration order, so `stdb_http.py` uses positional arrays.
 
 ## 7. Writer auth flow
 1. `curl -X POST http://192.168.50.10:3000/v1/identity` returns `{"identity": "...", "token": "..."}` ([docs](https://spacetimedb.com/docs/http/identity)). Do it twice: brain token, mapper token.
