@@ -8,12 +8,12 @@ Everything that runs **on the Pi**: turn brain commands into safe motion, scoop 
 
 | Yours | Not yours |
 |---|---|
-| `rover/**` (all Pi code + calibration), `gx10/overhead/**`, `mocks/fake_rover.py` | Deciding *where* to go or what to sample (brain, P4) |
+| `rover/**` (all Pi code + calibration) except `bev.py` and `proposals.py`, `gx10/overhead/**`, `mocks/fake_rover.py` | Deciding *where* to go or what to sample (brain, P4) |
 | WS server :8765 `/rover`, snapshot server :8080 | Scoring/classifying rocks (vision, P3). You only *propose* |
 | Motion primitives, heading estimation (gyro + BEV VO), pose, `set_pose` | Global map fusion (mapper, P3) |
-| Station capture, BEV homography, rock proposals ("rockster-lite") | DB writes (you never talk to SpacetimeDB) |
+| Station capture (calls P3's `bev.py` and `proposals.py`) | DB writes (you never talk to SpacetimeDB) |
 | Approach (visual servo), scoop sequence, empty-scoop retry trigger | Physical build (P1) |
-| Local store on SD, uploader with retry queue | |
+| Local store on SD, uploader with retry queue | Ground image `bev.py` and rock proposals `proposals.py`, with their tests (P3 since 2026-10-24, agreed with you) |
 | Safety: heartbeat watchdog, estop latch, tilt cutoff | |
 | Calibration: motion, camera/BEV homography, scoop poses, scoop zone | |
 
@@ -117,12 +117,12 @@ class Camera:
     @property present: bool
     exposure_locked: bool   # docs/05 U-21: did the driver honour it? verified, not assumed
 
-# bev.py
+# bev.py  (P3 since 2026-10-24: these signatures are the interface station.py calls)
 def warp_to_bev(img: np.ndarray, H: np.ndarray, size_px: int) -> np.ndarray
 def pixel_to_rover_xy(u: float, v: float, H: np.ndarray, res_m_px: float, size_px: int) -> tuple[float,float]
 def stitch_station(views: list[tuple[float, np.ndarray]], res_m_px: float, size_px: int) -> np.ndarray  # rotate each BEV by its heading, max-blend
 
-# proposals.py  ("rockster-lite": edges + contours, inspired by Rockster/AEGIS target finding)
+# proposals.py  (P3 since 2026-10-24; "rockster-lite": edges + contours, inspired by Rockster/AEGIS target finding)
 def find_rocks(img: np.ndarray, min_area_px: int = 80, max_area_px: int = 8000) -> list[dict]
     # [{bbox_px:[x,y,w,h], contrast: float, solidity: float, center_px:[u,v]}]  Canny → close → findContours → filter
 
@@ -212,12 +212,12 @@ class ArucoTracker:
 | by I0 | Flash Pi OS, Wi-Fi to marsnet, static .20, `pip install -e shared/py`, `mocks/fake_rover.py` (speaks the full WS protocol with canned images) | **I0:** P4's brain connects to fake_rover and to the real Pi WS stub; heartbeat flows |
 | by I1 | motors, servos, imu, camera, safety, ws_server | `drive 0.3` and `turn 90` work from a WS client; watchdog stops the motors when you kill the client mid-drive |
 | by I2 | calibration, pose, heading (gyro), snapshot server | 360° turn error < 10° (gyro) / < 20° (timed); 1 m drive < 5 cm drift |
-| by I2 | station, bev, proposals, local_store, uploader | **I1/I2:** a `station` produces 8 keyframes + BEV + proposals on the SD card and in the mapper's `/data/runs/…` (P3) within 60 s |
+| by I2 | station, local_store, uploader (bev + proposals come from P3) | **I1/I2:** a `station` produces 8 keyframes + BEV + proposals on the SD card and in the mapper's `/data/runs/…` (P3) within 60 s |
 | by I3 | approach, scoop sequence, overhead tracker | Approach puts the pebble in the scoop zone ≥ 8/10; scoop pick ≥ 7/10 (with P1) |
 | by I4 | VO fusion, robustness: reconnect, camera re-open, upload retry | **I3/I4:** full mission end to end with the brain; unplugging Wi-Fi for 10 s → motors stop, then the run resumes after reconnect |
 | by I5 | Bug fixes only, tune thresholds | **I5 freeze** |
 
-Unit tests in `rover/tests/`: `test_bev.py` (pixel→xy on a synthetic homography), `test_proposals.py` (finds 3 dark blobs on a synthetic image), `test_safety.py` (watchdog timing with a fake clock), `test_protocol.py` (every op round-trips through pydantic).
+Unit tests in `rover/tests/`: `test_bev.py` (pixel→xy on a synthetic homography) and `test_proposals.py` (finds 3 dark blobs on a synthetic image), both P3's since 2026-10-24; `test_safety.py` (watchdog timing with a fake clock), `test_protocol.py` (every op round-trips through pydantic).
 
 ## 8. Mocks
 - **You provide** `mocks/fake_rover.py`: same WS protocol and timing (station ≈ 5 s), poses moving as commanded, station bundles uploaded to the real mapper (or fake_mapper), and `scoop` returning a `present.jpg`. Images are **generated in code** (PIL: sand grain + dark blobs), not read from `mocks/data/stations/` — no image files in git, and `--seed` makes a run replayable. P4 and P3 build against it from I0.

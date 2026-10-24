@@ -5,11 +5,14 @@
 | Role | Person | Type | Brief | Owns (summary) |
 |---|---|---|---|---|
 | **P1** | Aryan | Hardware | [P1-hardware.md](roles/P1-hardware.md) | `hardware/**`, docs/01; chassis, power, wiring, scoop, mast, markers, arena; arena photos + labels (data in `ml/data/arena/`) |
-| **P2** | Shrujan | Hybrid (Pi software + bring-up) | [P2-rover-runtime.md](roles/P2-rover-runtime.md) | `rover/**`, `gx10/overhead/**`, `mocks/fake_rover.py` |
-| **P3** | Aditi | Hybrid (ML, vision, mapper, map UI) | [P3-perception-ai.md](roles/P3-perception-ai.md) | `ml/**`, `gx10/vision/**`, `gx10/mapper/**`, `dashboard/src/map/**`, `dashboard/src/assay/**`, `config/models.yaml`, `mocks/fake_vision.py`, `mocks/fake_mapper.py`, docs/03 |
+| **P2** | Shrujan | Hybrid (Pi software + bring-up) | [P2-rover-runtime.md](roles/P2-rover-runtime.md) | `rover/**` except `rover/rover/bev.py`, `rover/rover/proposals.py` and their tests (P3), `gx10/overhead/**`, `mocks/fake_rover.py` |
+| **P3** | Aditi | Hybrid (ML, vision, mapper, map UI, Pi ground image + rock detection) | [P3-perception-ai.md](roles/P3-perception-ai.md) | `ml/**`, `gx10/vision/**`, `gx10/mapper/**`, `dashboard/src/map/**`, `dashboard/src/assay/**`, `config/models.yaml`, `mocks/fake_vision.py`, `mocks/fake_mapper.py`, docs/03; on the Pi: `rover/rover/bev.py`, `rover/rover/proposals.py` (+ `rover/tests/test_bev.py`, `rover/tests/test_proposals.py`) |
 | **P4** | Rohan Bharti | Software lead (brain, data, dashboard, integration) | [P4-brain-data.md](roles/P4-brain-data.md) | `gx10/brain/**` (including `voice/`), `spacetimedb/**`, `dashboard/**` except map/assay, `shared/py/**`, `config/**` except `models.yaml`, `scripts/**`, `mocks/fake_brain.py`, `mocks/replay_run.py`, root files, docs 00/02/04/05/06/sources/TEAM |
 
 P4 is the integration lead: they run the milestones in [doc 04](04-integration-timeline.md).
+
+**Ownership changes**
+- **2026-10-24, P2 → P3 (agreed by Shrujan):** the ground image (`rover/rover/bev.py`) and rock detection (`rover/rover/proposals.py`), with their tests. P2 keeps `station.py` (which calls them), `heading.py` (BEV visual odometry), `calibrate_camera.py` (which produces the homography `bev.py` uses) and everything else under `rover/`. The function signatures in [P2 §4](roles/P2-rover-runtime.md#4-files-and-function-signatures) stay the interface between the two.
 
 ## Rules everyone (and every agent) follows
 1. Your role's paths are your default area, but **anyone may work on any path or task** without asking permission. When you touch someone else's area, warn first ("Heads-up: this is Pn's area"), name them in the commit message and tell them in chat ([AGENTS.md §2](../AGENTS.md#2-ownership-default-owners-open-to-everyone)).
@@ -35,7 +38,9 @@ changes, tell P2 in chat.
 ```
 I am P2 (rover runtime) on this repo. Read AGENTS.md, docs/00-overview-and-contracts.md
 (all of it: §6.2 WS protocol, §4 frames/timing, §6.4–6.5 uploads) and docs/roles/P2-rover-runtime.md.
-My area: rover/**, gx10/overhead/**, mocks/fake_rover.py and docs/roles/P2-rover-runtime.md.
+My area: rover/** (except rover/rover/bev.py, rover/rover/proposals.py and their tests,
+which are P3's since 2026-10-24), gx10/overhead/**, mocks/fake_rover.py and docs/roles/P2-rover-runtime.md.
+station.py calls P3's warp_to_bev, pixel_to_rover_xy, stitch_station and find_rocks.
 You may also work on any other area or task without asking anyone: before you edit
 another role's path, tell me "Heads-up: <path> is Pn's area", then go ahead (AGENTS.md §2).
 Use pydantic models from marsrover_shared.schemas for every message;
@@ -47,9 +52,11 @@ never hand-roll dicts and never talk to SpacetimeDB. Hardware pinout comes from 
 I am P3 (perception & AI) on this repo. Read AGENTS.md, docs/00-overview-and-contracts.md
 (§6.6–6.7 vision API, §6.4 station upload, §8 scoring inputs), docs/02-spacetimedb.md (the reducers
 the mapper calls), docs/03-space-data-and-training.md, docs/06-dashboard.md §4–§7 and
-docs/roles/P3-perception-ai.md. My area: ml/**, gx10/vision/**, gx10/mapper/**,
+docs/roles/P3-perception-ai.md (plus docs/roles/P2-rover-runtime.md §4–§6 for the station flow that
+calls my Pi modules). My area: ml/**, gx10/vision/**, gx10/mapper/**,
 dashboard/src/map/**, dashboard/src/assay/**, config/models.yaml,
-mocks/fake_vision.py, mocks/fake_mapper.py, docs/03 and docs/roles/P3-perception-ai.md.
+mocks/fake_vision.py, mocks/fake_mapper.py, docs/03 and docs/roles/P3-perception-ai.md, and on the Pi
+rover/rover/bev.py, rover/rover/proposals.py, rover/tests/test_bev.py, rover/tests/test_proposals.py.
 You may also work on any other area or task without asking anyone: before you edit
 another role's path, tell me "Heads-up: <path> is Pn's area", then go ahead (AGENTS.md §2). Return score *components* only; the final score is the brain's.
 Dashboard components take rows via props (MapViewProps, BradfordPanelProps) and never open their own
