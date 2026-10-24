@@ -13,6 +13,7 @@ import {
 export default __t.row({
   id: __t.u64().primaryKey(),
   runId: __t.string().name("run_id"),
+  key: __t.string(),
   sampleId: __t.string().name("sample_id"),
   candId: __t.string().name("cand_id"),
   visitId: __t.string().name("visit_id"),

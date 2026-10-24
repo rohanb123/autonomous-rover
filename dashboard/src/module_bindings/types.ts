@@ -13,6 +13,7 @@ import {
 export const AnalysisRecord = __t.object("AnalysisRecord", {
   id: __t.u64(),
   runId: __t.string(),
+  key: __t.string(),
   sampleId: __t.string(),
   candId: __t.string(),
   visitId: __t.string(),
@@ -36,6 +37,7 @@ export const AnalysisRecord = __t.object("AnalysisRecord", {
 export type AnalysisRecord = __Infer<typeof AnalysisRecord>;
 
 export const Candidate = __t.object("Candidate", {
+  key: __t.string(),
   candId: __t.string(),
   runId: __t.string(),
   stationId: __t.string(),
@@ -81,6 +83,7 @@ export const GlobalTile = __t.object("GlobalTile", {
 export type GlobalTile = __Infer<typeof GlobalTile>;
 
 export const Keyframe = __t.object("Keyframe", {
+  key: __t.string(),
   kfId: __t.string(),
   runId: __t.string(),
   stationId: __t.string(),
@@ -94,6 +97,7 @@ export const Keyframe = __t.object("Keyframe", {
 export type Keyframe = __Infer<typeof Keyframe>;
 
 export const LocalMapTile = __t.object("LocalMapTile", {
+  key: __t.string(),
   stationId: __t.string(),
   runId: __t.string(),
   tUnix: __t.f64(),
@@ -109,6 +113,7 @@ export const LocalMapTile = __t.object("LocalMapTile", {
 export type LocalMapTile = __Infer<typeof LocalMapTile>;
 
 export const Mission = __t.object("Mission", {
+  key: __t.string(),
   missionId: __t.string(),
   runId: __t.string(),
   text: __t.string(),
@@ -158,6 +163,7 @@ export const Run = __t.object("Run", {
 export type Run = __Infer<typeof Run>;
 
 export const TaskQueue = __t.object("TaskQueue", {
+  key: __t.string(),
   taskId: __t.string(),
   runId: __t.string(),
   missionId: __t.string(),
@@ -183,6 +189,7 @@ export const Telemetry = __t.object("Telemetry", {
 export type Telemetry = __Infer<typeof Telemetry>;
 
 export const Visit = __t.object("Visit", {
+  key: __t.string(),
   visitId: __t.string(),
   runId: __t.string(),
   candId: __t.string(),

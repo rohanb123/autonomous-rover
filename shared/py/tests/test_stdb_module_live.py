@@ -40,11 +40,27 @@ def run_id(db):
 def _analysis(run_id, sample_id, simulated=True, verdict="low"):
     # Positional order of add_analysis (docs/02 §6).
     return [
-        run_id, sample_id, "c_0001", "v_0001", time.time(), "http://x/present.jpg",
-        "float_rock", 0.62, "A small angular dark rock fragment.", True,
-        "bradford_sim", 0.2585, 282.1, "µg/mL", verdict, True,
-        json.dumps(GOLDEN_CURVE), simulated, 3896889563, "bradford_sim-1",
-    ]  # fmt: skip
+        run_id,
+        sample_id,
+        "c_0001",
+        "v_0001",
+        time.time(),
+        "http://x/present.jpg",
+        "float_rock",
+        0.62,
+        "A small angular dark rock fragment.",
+        True,
+        "bradford_sim",
+        0.2585,
+        282.1,
+        "µg/mL",
+        verdict,
+        True,
+        json.dumps(GOLDEN_CURVE),
+        simulated,
+        3896889563,
+        "bradford_sim-1",
+    ]
 
 
 def test_no_token_is_refused(run_id):
@@ -79,9 +95,22 @@ def test_golden_assay_round_trips_exactly_and_is_idempotent(db, run_id):
 def test_mark_visited_updates_candidate(db, run_id):
     cand = f"c_{time.time_ns()}"
     db.call(
-        "upsert_candidate", cand, run_id, "s_0001", 1.0, 0.2, 0.63, "{}", "float_rock", 0.028,
-        "queued", 1, "Novel texture", "", time.time(),
-    )  # fmt: skip
+        "upsert_candidate",
+        cand,
+        run_id,
+        "s_0001",
+        1.0,
+        0.2,
+        0.63,
+        "{}",
+        "float_rock",
+        0.028,
+        "queued",
+        1,
+        "Novel texture",
+        "",
+        time.time(),
+    )
     db.call("mark_visited", f"v_{time.time_ns()}", run_id, cand, 1.0, 0.2, 0.20, "unreachable", 0.0)
     (row,) = db.sql(f"SELECT * FROM candidate WHERE cand_id = '{cand}'")
     assert (row["status"], row["rank"]) == ("failed", -1)
@@ -101,3 +130,46 @@ def test_size_caps_and_event_truncation(db, run_id):
     db.call("log_event", run_id, time.time(), "brain", "info", "test", "m" * 600, "{}")
     (row,) = db.sql(f"SELECT * FROM event WHERE run_id = '{run_id}'")
     assert len(row["msg"]) == 500
+
+
+def test_runs_reusing_ids_never_overwrite_each_other(db):
+    """ids like c_0001 restart every run; rows are keyed by run + id (contract 1.4.0)."""
+    runs = [f"r_live_{time.time_ns()}", f"r_live_{time.time_ns() + 1}"]
+    for i, rid in enumerate(runs):
+        db.call("start_run", rid, "pytest", time.time())
+        db.call("upsert_mission", "m_0001", rid, f"mission {i}", "{}", "[]", "parsed")
+        db.call("upsert_task", "t_0001", rid, "m_0001", "station", "s_0001", 1, "done", "")
+        db.call("upsert_local_tile", "s_0001", rid, 0.0, 0.0, 0.0, 0.0, 0.005, 1, 1, "png", "")
+        db.call(
+            "upsert_candidate",
+            "c_0001",
+            rid,
+            "s_0001",
+            float(i),
+            0.0,
+            0.5,
+            "{}",
+            "float_rock",
+            0.02,
+            "queued",
+            1,
+            f"run {i}",
+            "",
+            time.time(),
+        )
+        db.call("mark_visited", "v_0001", rid, "c_0001", float(i), 0.0, 0.2, "sampled", 0.0)
+        db.call("add_analysis", *_analysis(rid, "a_0001"))
+    for i, rid in enumerate(runs):
+        for table, col in [
+            ("mission", "mission_id"),
+            ("task_queue", "task_id"),
+            ("local_map_tile", "station_id"),
+            ("candidate", "cand_id"),
+            ("visit", "visit_id"),
+            ("analysis_record", "sample_id"),
+        ]:
+            rows = db.sql(f"SELECT * FROM {table} WHERE run_id = '{rid}'")
+            assert len(rows) == 1, (table, rid)
+            assert rows[0]["key"] == f"{rid}|{rows[0][col]}"
+        (cand,) = db.sql(f"SELECT * FROM candidate WHERE run_id = '{rid}'")
+        assert (cand["x"], cand["reason"], cand["status"]) == (float(i), f"run {i}", "visited")

@@ -3,7 +3,7 @@
 > If code disagrees with this file, the code is wrong. Change process: [AGENTS.md §3](../AGENTS.md#3-changing-a-contract).
 
 ## 0. Version
-`CONTRACT_VERSION = 1.3.0` (2026-10-24: removed the Mars delay mode in 1.1.0; mission parsing via Grok in 1.2.0; keyframe headings are absolute + mapper `/health` in 1.3.0)
+`CONTRACT_VERSION = 1.4.0` (2026-10-24: removed the Mars delay mode in 1.1.0; mission parsing via Grok in 1.2.0; keyframe headings are absolute + mapper `/health` in 1.3.0; run-scoped DB keys in 1.4.0)
 
 ## 1. System in one page
 
@@ -211,6 +211,7 @@ CORS: brain, mapper and vision allow origin `http://192.168.50.30:5173` and `htt
 
 ## 5. IDs
 See [AGENTS.md §4](../AGENTS.md#4-conventions). The brain mints `r_ m_ t_ c_ v_ a_`; the Pi mints `s_ k_ p_` (they're scoped by `run_id`, which the brain sends in `start_run` cmd).
+Because ids restart every run, the DB keys run-scoped rows by `"<runId>|<id>"` (02 §5); an id alone is only unique together with its run_id.
 
 ## 6. Schemas
 

@@ -1,6 +1,8 @@
 // Tables for the "marsrover" module. Shape is binding: docs/02-spacetimedb.md §5.
 // SQL/HTTP names are snake_case (`name`); ctx.db / client accessors are the camelCase keys
 // passed to schema({...}). Every run-scoped table has a btree index on runId.
+// Rows whose ids restart every run (c_0001, m_0001, …) are keyed by `key` = "<runId>|<id>",
+// so a new run never overwrites an earlier run's rows (contract 1.4.0).
 // SQL names put an underscore before digits (pngB64 -> png_b_64, a595 -> a_595); column
 // names can't be overridden in 2.13, see docs/02 §3.
 import { schema, table, t } from 'spacetimedb/server';
@@ -23,7 +25,8 @@ const run = table(
 const mission = table(
   { name: 'mission', public: true },
   {
-    missionId: t.string().primaryKey(),
+    key: t.string().primaryKey(), // "<runId>|missionId": ids restart every run
+    missionId: t.string(),
     runId: runId(),
     text: t.string(),
     paramsJson: t.string(),
@@ -35,7 +38,8 @@ const mission = table(
 const taskQueue = table(
   { name: 'task_queue', public: true },
   {
-    taskId: t.string().primaryKey(),
+    key: t.string().primaryKey(), // "<runId>|taskId": ids restart every run
+    taskId: t.string(),
     runId: runId(),
     missionId: t.string(),
     kind: t.string(), // station | visit | return
@@ -63,7 +67,8 @@ const pose = table(
 const keyframe = table(
   { name: 'keyframe', public: true },
   {
-    kfId: t.string().primaryKey(),
+    key: t.string().primaryKey(), // "<runId>|kfId": ids restart every run
+    kfId: t.string(),
     runId: runId(),
     stationId: t.string(),
     tUnix: t.f64(),
@@ -78,7 +83,8 @@ const keyframe = table(
 const localMapTile = table(
   { name: 'local_map_tile', public: true },
   {
-    stationId: t.string().primaryKey(),
+    key: t.string().primaryKey(), // "<runId>|stationId": ids restart every run
+    stationId: t.string(),
     runId: runId(),
     tUnix: t.f64(),
     x: t.f64(),
@@ -112,7 +118,8 @@ const globalTile = table(
 const candidate = table(
   { name: 'candidate', public: true },
   {
-    candId: t.string().primaryKey(),
+    key: t.string().primaryKey(), // "<runId>|candId": ids restart every run
+    candId: t.string(),
     runId: runId(),
     stationId: t.string(),
     x: t.f64(),
@@ -132,7 +139,8 @@ const candidate = table(
 const visit = table(
   { name: 'visit', public: true },
   {
-    visitId: t.string().primaryKey(),
+    key: t.string().primaryKey(), // "<runId>|visitId": ids restart every run
+    visitId: t.string(),
     runId: runId(),
     candId: t.string(),
     x: t.f64(),
@@ -148,7 +156,8 @@ const analysisRecord = table(
   {
     id: t.u64().primaryKey().autoInc(),
     runId: runId(),
-    sampleId: t.string().unique(),
+    key: t.string().unique(), // "<runId>|<sampleId>": ids restart every run
+    sampleId: t.string(),
     candId: t.string(),
     visitId: t.string(),
     tUnix: t.f64(),

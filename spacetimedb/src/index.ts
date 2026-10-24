@@ -13,6 +13,11 @@ const MAX_THUMB_B64 = 150_000;
 const MAX_LOCAL_TILE_B64 = 700_000;
 const MAX_EVENT_MSG = 500;
 
+// Ids like c_0001 restart every run, so rows are keyed by run + id (contract 1.4.0).
+function runKey(runId: string, id: string): string {
+  return `${runId}|${id}`;
+}
+
 function nowUnix(ctx: Ctx): number {
   return Number(ctx.timestamp.microsSinceUnixEpoch) / 1e6;
 }
@@ -89,8 +94,9 @@ export const upsert_mission = spacetimedb.reducer(
   (ctx, a) => {
     requireWriter(ctx);
     oneOf('status', a.status, ['parsed', 'active', 'done', 'rejected']);
-    if (ctx.db.mission.missionId.find(a.missionId)) ctx.db.mission.missionId.update(a);
-    else ctx.db.mission.insert(a);
+    const row = { key: runKey(a.runId, a.missionId), ...a };
+    if (ctx.db.mission.key.find(row.key)) ctx.db.mission.key.update(row);
+    else ctx.db.mission.insert(row);
   }
 );
 
@@ -103,8 +109,9 @@ export const upsert_task = spacetimedb.reducer(
     requireWriter(ctx);
     oneOf('kind', a.kind, ['station', 'visit', 'return']);
     oneOf('status', a.status, ['pending', 'active', 'done', 'failed', 'skipped']);
-    if (ctx.db.taskQueue.taskId.find(a.taskId)) ctx.db.taskQueue.taskId.update(a);
-    else ctx.db.taskQueue.insert(a);
+    const row = { key: runKey(a.runId, a.taskId), ...a };
+    if (ctx.db.taskQueue.key.find(row.key)) ctx.db.taskQueue.key.update(row);
+    else ctx.db.taskQueue.insert(row);
   }
 );
 
@@ -155,8 +162,9 @@ export const upsert_keyframe = spacetimedb.reducer(
   (ctx, a) => {
     requireWriter(ctx);
     if (a.thumbB64.length > MAX_THUMB_B64) throw new SenderError(`thumbB64 > ${MAX_THUMB_B64} chars`);
-    if (ctx.db.keyframe.kfId.find(a.kfId)) ctx.db.keyframe.kfId.update(a);
-    else ctx.db.keyframe.insert(a);
+    const row = { key: runKey(a.runId, a.kfId), ...a };
+    if (ctx.db.keyframe.key.find(row.key)) ctx.db.keyframe.key.update(row);
+    else ctx.db.keyframe.insert(row);
   }
 );
 
@@ -168,8 +176,9 @@ export const upsert_local_tile = spacetimedb.reducer(
   (ctx, a) => {
     requireWriter(ctx);
     if (a.pngB64.length > MAX_LOCAL_TILE_B64) throw new SenderError(`pngB64 > ${MAX_LOCAL_TILE_B64} chars`);
-    if (ctx.db.localMapTile.stationId.find(a.stationId)) ctx.db.localMapTile.stationId.update(a);
-    else ctx.db.localMapTile.insert(a);
+    const row = { key: runKey(a.runId, a.stationId), ...a };
+    if (ctx.db.localMapTile.key.find(row.key)) ctx.db.localMapTile.key.update(row);
+    else ctx.db.localMapTile.insert(row);
   }
 );
 
@@ -198,8 +207,9 @@ export const upsert_candidate = spacetimedb.reducer(
   (ctx, a) => {
     requireWriter(ctx);
     oneOf('status', a.status, ['new', 'queued', 'active', 'visited', 'skipped', 'merged', 'excluded', 'failed']);
-    if (ctx.db.candidate.candId.find(a.candId)) ctx.db.candidate.candId.update(a);
-    else ctx.db.candidate.insert(a);
+    const row = { key: runKey(a.runId, a.candId), ...a };
+    if (ctx.db.candidate.key.find(row.key)) ctx.db.candidate.key.update(row);
+    else ctx.db.candidate.insert(row);
   }
 );
 
@@ -218,11 +228,12 @@ export const mark_visited = spacetimedb.reducer(
   (ctx, a) => {
     requireWriter(ctx);
     oneOf('outcome', a.outcome, Object.keys(CANDIDATE_STATUS_FOR_OUTCOME));
-    if (ctx.db.visit.visitId.find(a.visitId)) ctx.db.visit.visitId.update(a);
-    else ctx.db.visit.insert(a);
-    const cand = ctx.db.candidate.candId.find(a.candId);
+    const row = { key: runKey(a.runId, a.visitId), ...a };
+    if (ctx.db.visit.key.find(row.key)) ctx.db.visit.key.update(row);
+    else ctx.db.visit.insert(row);
+    const cand = ctx.db.candidate.key.find(runKey(a.runId, a.candId));
     if (cand) {
-      ctx.db.candidate.candId.update({ ...cand, status: CANDIDATE_STATUS_FOR_OUTCOME[a.outcome], rank: -1 });
+      ctx.db.candidate.key.update({ ...cand, status: CANDIDATE_STATUS_FOR_OUTCOME[a.outcome], rank: -1 });
     }
   }
 );
@@ -240,9 +251,10 @@ export const add_analysis = spacetimedb.reducer(
     if (a.simulated !== true) throw new SenderError('analysis must be simulated=true');
     oneOf('assayType', a.assayType, ['', 'bradford_sim']);
     oneOf('verdict', a.verdict, ['', 'below_detection', 'low', 'elevated']);
-    const existing = ctx.db.analysisRecord.sampleId.find(a.sampleId);
-    if (existing) ctx.db.analysisRecord.id.update({ ...existing, ...a });
-    else ctx.db.analysisRecord.insert({ id: 0n, ...a });
+    const key = runKey(a.runId, a.sampleId);
+    const existing = ctx.db.analysisRecord.key.find(key);
+    if (existing) ctx.db.analysisRecord.id.update({ ...existing, ...a, key });
+    else ctx.db.analysisRecord.insert({ id: 0n, key, ...a });
   }
 );
 

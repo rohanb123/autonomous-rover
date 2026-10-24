@@ -79,30 +79,30 @@ const tablesSchema = __schema({
       { accessor: 'id', name: 'analysis_record_id_idx_btree', algorithm: 'btree', columns: [
         'id',
       ] },
+      { accessor: 'key', name: 'analysis_record_key_idx_btree', algorithm: 'btree', columns: [
+        'key',
+      ] },
       { accessor: 'runId', name: 'analysis_record_run_id_idx_btree', algorithm: 'btree', columns: [
         'runId',
-      ] },
-      { accessor: 'sampleId', name: 'analysis_record_sample_id_idx_btree', algorithm: 'btree', columns: [
-        'sampleId',
       ] },
     ],
     constraints: [
       { name: 'analysis_record_id_key', constraint: 'unique', columns: ['id'] },
-      { name: 'analysis_record_sample_id_key', constraint: 'unique', columns: ['sampleId'] },
+      { name: 'analysis_record_key_key', constraint: 'unique', columns: ['key'] },
     ],
   }, AnalysisRecordRow),
   candidate: __table({
     name: 'candidate',
     indexes: [
-      { accessor: 'candId', name: 'candidate_cand_id_idx_btree', algorithm: 'btree', columns: [
-        'candId',
+      { accessor: 'key', name: 'candidate_key_idx_btree', algorithm: 'btree', columns: [
+        'key',
       ] },
       { accessor: 'runId', name: 'candidate_run_id_idx_btree', algorithm: 'btree', columns: [
         'runId',
       ] },
     ],
     constraints: [
-      { name: 'candidate_cand_id_key', constraint: 'unique', columns: ['candId'] },
+      { name: 'candidate_key_key', constraint: 'unique', columns: ['key'] },
     ],
   }, CandidateRow),
   event: __table({
@@ -136,43 +136,43 @@ const tablesSchema = __schema({
   keyframe: __table({
     name: 'keyframe',
     indexes: [
-      { accessor: 'kfId', name: 'keyframe_kf_id_idx_btree', algorithm: 'btree', columns: [
-        'kfId',
+      { accessor: 'key', name: 'keyframe_key_idx_btree', algorithm: 'btree', columns: [
+        'key',
       ] },
       { accessor: 'runId', name: 'keyframe_run_id_idx_btree', algorithm: 'btree', columns: [
         'runId',
       ] },
     ],
     constraints: [
-      { name: 'keyframe_kf_id_key', constraint: 'unique', columns: ['kfId'] },
+      { name: 'keyframe_key_key', constraint: 'unique', columns: ['key'] },
     ],
   }, KeyframeRow),
   localMapTile: __table({
     name: 'local_map_tile',
     indexes: [
+      { accessor: 'key', name: 'local_map_tile_key_idx_btree', algorithm: 'btree', columns: [
+        'key',
+      ] },
       { accessor: 'runId', name: 'local_map_tile_run_id_idx_btree', algorithm: 'btree', columns: [
         'runId',
       ] },
-      { accessor: 'stationId', name: 'local_map_tile_station_id_idx_btree', algorithm: 'btree', columns: [
-        'stationId',
-      ] },
     ],
     constraints: [
-      { name: 'local_map_tile_station_id_key', constraint: 'unique', columns: ['stationId'] },
+      { name: 'local_map_tile_key_key', constraint: 'unique', columns: ['key'] },
     ],
   }, LocalMapTileRow),
   mission: __table({
     name: 'mission',
     indexes: [
-      { accessor: 'missionId', name: 'mission_mission_id_idx_btree', algorithm: 'btree', columns: [
-        'missionId',
+      { accessor: 'key', name: 'mission_key_idx_btree', algorithm: 'btree', columns: [
+        'key',
       ] },
       { accessor: 'runId', name: 'mission_run_id_idx_btree', algorithm: 'btree', columns: [
         'runId',
       ] },
     ],
     constraints: [
-      { name: 'mission_mission_id_key', constraint: 'unique', columns: ['missionId'] },
+      { name: 'mission_key_key', constraint: 'unique', columns: ['key'] },
     ],
   }, MissionRow),
   pose: __table({
@@ -214,15 +214,15 @@ const tablesSchema = __schema({
   taskQueue: __table({
     name: 'task_queue',
     indexes: [
+      { accessor: 'key', name: 'task_queue_key_idx_btree', algorithm: 'btree', columns: [
+        'key',
+      ] },
       { accessor: 'runId', name: 'task_queue_run_id_idx_btree', algorithm: 'btree', columns: [
         'runId',
       ] },
-      { accessor: 'taskId', name: 'task_queue_task_id_idx_btree', algorithm: 'btree', columns: [
-        'taskId',
-      ] },
     ],
     constraints: [
-      { name: 'task_queue_task_id_key', constraint: 'unique', columns: ['taskId'] },
+      { name: 'task_queue_key_key', constraint: 'unique', columns: ['key'] },
     ],
   }, TaskQueueRow),
   telemetry: __table({
@@ -242,15 +242,15 @@ const tablesSchema = __schema({
   visit: __table({
     name: 'visit',
     indexes: [
+      { accessor: 'key', name: 'visit_key_idx_btree', algorithm: 'btree', columns: [
+        'key',
+      ] },
       { accessor: 'runId', name: 'visit_run_id_idx_btree', algorithm: 'btree', columns: [
         'runId',
       ] },
-      { accessor: 'visitId', name: 'visit_visit_id_idx_btree', algorithm: 'btree', columns: [
-        'visitId',
-      ] },
     ],
     constraints: [
-      { name: 'visit_visit_id_key', constraint: 'unique', columns: ['visitId'] },
+      { name: 'visit_key_key', constraint: 'unique', columns: ['key'] },
     ],
   }, VisitRow),
 });
