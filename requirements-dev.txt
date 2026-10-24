@@ -1,3 +1,4 @@
 pytest>=8
 ruff>=0.6
 black>=24
+pillow>=10   # mocks/fake_brain.py renders fake tiles and photos

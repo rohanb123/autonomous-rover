@@ -112,6 +112,7 @@ No component writes to STDB. No component talks to the rover.
 - World = mission frame metres. `camera.ts`: `worldToScreen(x, y)`, with +x **up** on screen (matches "forward" at start) and +y left. Default view fits all poses + 0.5 m.
 - **Local tile** (BEV, rover frame at capture): draw image centered at (x, y), rotated by `headingDeg`, size `wPx·resMPx` m. Newer tiles drawn on top. Opacity 0.85.
 - **Global tile** (replay, mission frame, axis-aligned): draw at `originX, originY` with `resMPx`. Hidden in live mode unless `run.fused`.
+  - **Convention** (the mapper writes it, MapView reads it): same image orientation as BEV tiles, so image up = mission +x and image left = mission +y. `(originX, originY)` is the mission position of the tile's **top-left pixel corner** (its max-x, max-y corner). Pixel (col, row) → `x = originX − row·resMPx`, `y = originY − col·resMPx`. Tiles are 512 px; id `g_<run>_<ix>_<iy>`. `mocks/fake_brain.py` produces tiles this way.
 - **Trail**: polyline of poses (color by source: dr gray, aruco green, fused white). Rover glyph = triangle at the latest pose (or at the scrubbed pose).
 - **Pins**: candidates colored by status (new gray, queued yellow, active orange, visited green, skipped/excluded dim). Rank number inside top-k pins. Size ∝ score.
 - **Exclusion rings**: circle of `radiusM` at each visit, dashed.
