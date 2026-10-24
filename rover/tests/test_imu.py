@@ -14,6 +14,7 @@ The assertions that earn their keep:
 from __future__ import annotations
 
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -35,6 +36,7 @@ from rover.imu import (  # noqa: E402
     NONE,
     G,
     Imu,
+    ImuPoller,
     be_signed,
     le_signed,
 )
@@ -294,3 +296,100 @@ def test_a_bus_that_fails_throughout_gives_up_rather_than_spinning(caplog):
         assert imu.gyro_bias_calibrate(10.0) == 0.0
     assert clock.t < 1.0, "gave up early instead of retrying for the full ten seconds"
     assert any("gave up" in r.message for r in caplog.records)
+
+
+# --- ImuPoller: keeping I2C off the event loop --------------------------------------------
+
+
+def test_the_poller_caches_a_sample_before_the_thread_even_starts():
+    """The first telemetry frame must not be empty, so start() takes one sample inline."""
+    imu = Imu(helpers.fake_mpu_bus(az_g=1.0))
+    poller = ImuPoller(imu, hz=50.0, sleep=lambda _s: None)
+    assert poller.cached() is None
+    poller.poll_once()
+    assert poller.cached()["az"] == pytest.approx(G, abs=1e-2)
+    assert poller.samples == 1
+
+
+def test_cached_never_touches_the_bus():
+    """That is the entire reason this class exists: the loop thread must not block on I2C."""
+    imu = Imu(helpers.fake_mpu_bus())
+    poller = ImuPoller(imu, sleep=lambda _s: None)
+    poller.poll_once()
+    reads_before = len(imu.bus.writes)
+
+    class Exploding(helpers.FakeBus):
+        def read_block(self, addr: int, reg: int, length: int) -> list[int]:
+            raise AssertionError("cached() must not read the bus")
+
+    imu.bus = Exploding({})
+    assert poller.cached() is not None  # served from the cache, no bus access
+    assert len(imu.bus.writes) == 0 and reads_before >= 0
+
+
+def test_a_failed_read_leaves_the_last_good_sample_in_place():
+    """A single dropped sample must not blank the tilt input mid-drive."""
+    imu = Imu(helpers.fake_mpu_bus(az_g=1.0))
+    poller = ImuPoller(imu, sleep=lambda _s: None)
+    poller.poll_once()
+    good = poller.cached()
+
+    class Flaky(helpers.FakeBus):
+        def read_block(self, addr: int, reg: int, length: int) -> list[int]:
+            raise OSError(121, "Remote I/O error")
+
+    imu._driver.bus = Flaky({})  # type: ignore[union-attr]
+    assert poller.poll_once() is None
+    assert poller.cached() == good
+    assert poller.failures == 1 and poller.present is True
+
+
+def test_a_good_read_clears_the_failure_streak():
+    imu = Imu(helpers.fake_mpu_bus())
+    poller = ImuPoller(imu, max_failures=3, sleep=lambda _s: None)
+    poller.failures = 2
+    poller.poll_once()
+    assert poller.failures == 0
+
+
+def test_the_poller_gives_up_after_too_many_consecutive_failures(caplog):
+    """A yanked ribbon should degrade to "no IMU", not log a trace 50 times a second."""
+
+    class Dead(helpers.FakeBus):
+        def read_block(self, addr: int, reg: int, length: int) -> list[int]:
+            raise OSError(121, "Remote I/O error")
+
+    imu = Imu(helpers.fake_mpu_bus())
+    imu._driver.bus = Dead({})  # type: ignore[union-attr]
+    poller = ImuPoller(imu, max_failures=3, sleep=lambda _s: None)
+    with caplog.at_level("WARNING"):
+        for _ in range(6):
+            poller.poll_once()
+    assert poller.present is False, "downstream now sees no IMU: timed turns, tilt off"
+    # One summary at the threshold, not one per failed read forever.
+    assert sum("gave up" in r.message for r in caplog.records) == 1
+
+
+def test_no_imu_means_start_does_nothing():
+    poller = ImuPoller(Imu(helpers.FakeBus({})), sleep=lambda _s: None)
+    poller.start()
+    assert poller.cached() is None and poller.present is False
+    poller.stop()  # must not raise with no thread
+
+
+def test_the_thread_really_runs_and_stops():
+    """One genuinely threaded test, since the whole point is that it is off the loop."""
+    imu = Imu(helpers.fake_mpu_bus(az_g=1.0))
+    poller = ImuPoller(imu, hz=200.0)
+    poller.start()
+    try:
+        deadline = time.monotonic() + 2.0
+        while poller.samples < 5 and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert poller.samples >= 5, f"only {poller.samples} samples in 2 s"
+        assert poller.cached()["az"] == pytest.approx(G, abs=1e-2)
+    finally:
+        poller.stop()
+    settled = poller.samples
+    time.sleep(0.05)
+    assert poller.samples == settled, "stop() left the thread running"

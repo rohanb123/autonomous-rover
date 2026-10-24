@@ -337,3 +337,88 @@ class Imu:
                 if callable(with_close):
                     with_close()
                 self.bus = None
+
+
+class ImuPoller:
+    """Samples the IMU on its own thread so the event loop never touches I2C.
+
+    The 20 Hz safety watchdog and the 5 Hz telemetry both want an accelerometer reading, and
+    both run on the asyncio loop. A seized I2C bus blocks for the kernel's timeout, and that
+    loop is the one that must never stall -- it is what delivers `estop` and what cuts the
+    motors when the heartbeat stops. So they read a cached dict instead, and the blocking
+    read happens here.
+
+    `Motion` does *not* use this: it runs on the op worker thread, where blocking is fine,
+    and a gyro-closed turn wants the freshest sample it can get rather than one up to a
+    poll period old.
+
+    After `max_failures` consecutive bus errors the poller gives up and reports absent, so a
+    yanked ribbon degrades to "no IMU" (timed turns, tilt cutoff off) instead of logging a
+    stack trace 50 times a second.
+    """
+
+    def __init__(
+        self,
+        imu: Imu,
+        hz: float = 50.0,
+        *,
+        max_failures: int = 10,
+        sleep: Callable[[float], None] = time.sleep,
+    ) -> None:
+        self.imu = imu
+        self.period_s = 1.0 / max(1.0, hz)
+        self.max_failures = max_failures
+        self.sleep = sleep
+        self.failures = 0
+        self.samples = 0
+        self._cached: dict[str, float] | None = None
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+        self._lock = threading.Lock()
+
+    @property
+    def present(self) -> bool:
+        """False once the bus has failed too many times in a row, or with no IMU at all."""
+        return self.imu.present and self.failures <= self.max_failures
+
+    def cached(self) -> dict[str, float] | None:
+        """The most recent sample, or None. Safe from any thread; never blocks on I2C."""
+        with self._lock:
+            return self._cached
+
+    def start(self) -> None:
+        if self._thread is not None or not self.imu.present:
+            return
+        self.poll_once()  # one synchronous sample, so the first telemetry frame is not empty
+        self._stop.clear()
+        self._thread = threading.Thread(target=self._loop, name="imu-poll", daemon=True)
+        self._thread.start()
+        log.info("IMU poller at %.0f Hz (%s)", 1.0 / self.period_s, self.imu.detect())
+
+    def stop(self) -> None:
+        self._stop.set()
+        thread, self._thread = self._thread, None
+        if thread is not None:
+            thread.join(timeout=2.0)
+
+    def poll_once(self) -> dict[str, float] | None:
+        """One sample into the cache. Returns it, or None if the read failed."""
+        try:
+            sample = self.imu.read()
+        except OSError as e:
+            self.failures += 1
+            if self.failures == self.max_failures + 1:
+                log.error("IMU gave up after %d consecutive bus errors: %s", self.failures, e)
+            elif self.failures <= self.max_failures:
+                log.warning("IMU read failed (%d/%d): %s", self.failures, self.max_failures, e)
+            return None
+        self.failures = 0  # a good read clears the streak
+        self.samples += 1
+        with self._lock:
+            self._cached = sample
+        return sample
+
+    def _loop(self) -> None:
+        while not self._stop.is_set():
+            self.poll_once()
+            self.sleep(self.period_s)
