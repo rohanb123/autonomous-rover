@@ -331,9 +331,12 @@ def main() -> None:
 
     writer = None
     if not args.no_stdb:
+        from marsrover_shared import journal
         from marsrover_shared.stdb_http import RateLimitedWriter, StdbClient
 
-        writer = RateLimitedWriter(StdbClient.from_env(token_var="STDB_TOKEN_MAPPER"), hz={})
+        writer = RateLimitedWriter(
+            StdbClient.from_env(token_var="STDB_TOKEN_MAPPER"), hz={}, journal=journal.record
+        )
     import uvicorn
 
     app = create_app(args.data_root, args.public_url, writer)

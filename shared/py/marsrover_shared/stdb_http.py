@@ -97,6 +97,8 @@ class RateLimitedWriter:
     `hz[key]` times per second (pose 2, status 2, telemetry 1). Any other key is a
     must-send write (candidate, visit, analysis): queued FIFO, bounded, oldest dropped
     on overflow. `on_drop(reason, count)` lets the owner `log_event('stdb_backpressure')`.
+    `journal(reducer, args)`, if given, sees every submit (e.g. marsrover_shared.journal.record),
+    including coalesced ones, so the journal is a superset of what reached the DB.
     """
 
     def __init__(
@@ -105,8 +107,10 @@ class RateLimitedWriter:
         hz: dict[str, float],
         max_queue: int = 1000,
         on_drop: Callable[[str, int], None] | None = None,
+        journal: Callable[[str, tuple[Any, ...]], None] | None = None,
     ) -> None:
         self._client = client
+        self._journal = journal
         self._period = {k: 1.0 / v for k, v in hz.items()}
         self._latest: dict[str, tuple[str, tuple[Any, ...]]] = {}
         self._next_due: dict[str, float] = {}
@@ -124,6 +128,11 @@ class RateLimitedWriter:
         return self._dropped
 
     def submit(self, key: str, reducer: str, *args: Any) -> None:
+        if self._journal is not None:
+            try:
+                self._journal(reducer, args)
+            except Exception as e:  # never let the backup break the live path
+                log.warning("journal write failed for %s: %s", reducer, e)
         with self._cv:
             if key in self._period:
                 self._latest[key] = (reducer, args)

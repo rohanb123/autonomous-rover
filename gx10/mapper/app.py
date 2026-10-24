@@ -312,7 +312,9 @@ def writer_from_env() -> Writer | None:
         log.warning("stdb write dropped (%d so far): %s", count, reason)
 
     client = StdbClient.from_env(token_var="STDB_TOKEN_MAPPER")
-    return RateLimitedWriter(client, hz={}, on_drop=on_drop)
+    from marsrover_shared import journal
+
+    return RateLimitedWriter(client, hz={}, on_drop=on_drop, journal=journal.record)
 
 
 def create_app_from_env() -> FastAPI:
