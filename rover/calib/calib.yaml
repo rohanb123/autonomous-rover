@@ -9,7 +9,7 @@
 # written into doc 01 fails the build.
 # Timing mirrors docs/00-overview-and-contracts.md section 4. Doc 00 wins.
 
-contract_version: "1.4.0"   # docs/00 section 0. A bump should fail loudly here, not drift
+contract_version: "1.5.0"   # docs/00 section 0. A bump should fail loudly here, not drift
                             # silently. 1.4.0 is run-scoped DB keys (P4): it changes
                             # spacetimedb/ and docs/02 only, not schemas.py, so nothing
                             # on the rover's wire or uploads moved.

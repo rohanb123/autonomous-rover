@@ -3,7 +3,7 @@
 > If code disagrees with this file, the code is wrong. Change process: [AGENTS.md §3](../AGENTS.md#3-changing-a-contract).
 
 ## 0. Version
-`CONTRACT_VERSION = 1.4.0` (2026-10-24: removed the Mars delay mode in 1.1.0; mission parsing via Grok in 1.2.0; keyframe headings are absolute + mapper `/health` in 1.3.0; run-scoped DB keys in 1.4.0)
+`CONTRACT_VERSION = 1.5.0` (2026-10-24: removed the Mars delay mode in 1.1.0; mission parsing via Grok in 1.2.0; keyframe headings are absolute + mapper `/health` in 1.3.0; run-scoped DB keys in 1.4.0; shortest route ending at home in 1.5.0)
 
 ## 1. System in one page
 
@@ -413,7 +413,7 @@ stateDiagram-v2
 - **Dedupe**: merge a new proposal into an existing candidate if `‖xy‖ ≤ 0.15 m` **and** `cos(emb) ≥ 0.85`; or `‖xy‖ ≤ 0.06 m` regardless. The merged candidate keeps the max score and appends `prop_ids`.
 - **Exclusion**: drop/mark `excluded` any candidate within `visit_radius_m = 0.20` of any visit.
 - **Heap**: a min-heap keyed by `score`, capped at `k`. On a new candidate: if size < k, push; elif score > heap[0], replace the root. Rebuilt after merge/skip/exclusion.
-- **Route**: nearest-neighbor from the current pose over the heap contents; recomputed after each visit (pose drifts).
+- **Route**: the **shortest** order to visit the planned targets from the current pose, **ending at home** when `return_home` (an open path otherwise): exact Held-Karp search for k ≤ 8, nearest-neighbor beyond that. Recomputed after each visit (pose drifts).
 - **Reason string** (`scoring.explain`): the top 2 positive components with values + category match + distance, ≤ 140 chars.
 
 ## 9. Contract copies

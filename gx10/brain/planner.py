@@ -1,4 +1,4 @@
-"""Station plan, top-k heap and nearest-neighbour route (doc 00 §8)."""
+"""Station plan, top-k heap and the visiting route (doc 00 §8)."""
 
 from __future__ import annotations
 
@@ -70,3 +70,68 @@ def nn_route(start: tuple[float, float], targets: Iterable[Candidate]) -> list[C
         left.remove(nxt)
         x, y = nxt.x, nxt.y
     return route
+
+
+MAX_EXACT = 8  # k ≤ 8 (doc 00 §6.1): Held-Karp is ~n²·2ⁿ ≈ 16k steps, instant
+
+
+def best_route(
+    start: tuple[float, float],
+    targets: Iterable[Candidate],
+    end: tuple[float, float] | None = (0.0, 0.0),
+) -> list[Candidate]:
+    """Shortest order to visit every target from `start`, finishing at `end` (home).
+
+    Exact (Held-Karp dynamic programming over subsets) for up to MAX_EXACT targets; pass
+    end=None for an open path (return_home=false). Ties go to the lower cand_ids, so the
+    route is deterministic. Beyond MAX_EXACT it falls back to nn_route.
+    """
+    pts = sorted(targets, key=lambda c: c.cand_id)
+    n = len(pts)
+    if n <= 1:
+        return pts
+    if n > MAX_EXACT:
+        return nn_route(start, pts)
+    xy = [(c.x, c.y) for c in pts]
+
+    def d(a: tuple[float, float], b: tuple[float, float]) -> float:
+        return math.hypot(a[0] - b[0], a[1] - b[1])
+
+    # cost[mask][j]: shortest path from start through the targets in `mask`, ending at j.
+    full = (1 << n) - 1
+    cost = [[math.inf] * n for _ in range(1 << n)]
+    prev = [[-1] * n for _ in range(1 << n)]
+    for j in range(n):
+        cost[1 << j][j] = d(start, xy[j])
+    for mask in range(1, 1 << n):
+        for j in range(n):
+            c = cost[mask][j]
+            if c == math.inf or not mask & (1 << j):
+                continue
+            for k in range(n):
+                if mask & (1 << k):
+                    continue
+                nxt, nc = mask | (1 << k), c + d(xy[j], xy[k])
+                if nc < cost[nxt][k] - 1e-12:
+                    cost[nxt][k], prev[nxt][k] = nc, j
+    tail = [0.0 if end is None else d(xy[j], end) for j in range(n)]
+    last = min(range(n), key=lambda j: (cost[full][j] + tail[j], j))
+    order, mask = [], full
+    while last != -1:
+        order.append(last)
+        last, mask = prev[mask][last], mask & ~(1 << last)
+    return [pts[i] for i in reversed(order)]
+
+
+def route_length(
+    start: tuple[float, float], route: Iterable[Candidate], end: tuple[float, float] | None = None
+) -> float:
+    """Total path length start → route → end (end=None: stop at the last target)."""
+    x, y = start
+    total = 0.0
+    for c in route:
+        total += math.hypot(c.x - x, c.y - y)
+        x, y = c.x, c.y
+    if end is not None:
+        total += math.hypot(end[0] - x, end[1] - y)
+    return total
