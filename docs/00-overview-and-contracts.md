@@ -69,7 +69,7 @@ ares-scout/
 │   ├── scoop/                     templates (scoop_template.pdf/svg), photos, measured angles sheet
 │   ├── arena/                     arena layout, marker placement
 │   └── checklists/preflight.md    pre-run checklist
-├── rover/                         P2  (runs on Pi)
+├── rover/                         P2  (runs on Pi); bev.py and proposals.py: P3
 │   ├── pyproject.toml
 │   ├── rover/
 │   │   ├── main.py                entry: loads calib, starts servers
@@ -85,8 +85,8 @@ ares-scout/
 │   │   ├── heading.py             gyro integration + BEV visual-odometry yaw
 │   │   ├── pose.py                dead-reckoning pose estimator + set_pose
 │   │   ├── station.py             spin-capture routine
-│   │   ├── bev.py                 homography → ground tile
-│   │   ├── proposals.py           "rockster-lite" rock proposals (classic CV)
+│   │   ├── bev.py                 homography → ground tile                  P3 (from P2, 2026-10-24)
+│   │   ├── proposals.py           "rockster-lite" rock proposals (classic CV)  P3 (from P2, 2026-10-24)
 │   │   ├── approach.py            visual servo into scoop zone
 │   │   ├── local_store.py         SD-card station bundles + SQLite index
 │   │   ├── uploader.py            POST to mapper with retry queue
