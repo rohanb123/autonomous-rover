@@ -22,8 +22,11 @@ from gpiozero import Motor
 
 # ---- motor / turn settings ----
 TURN_SPEED = 0.65       # 0..1; spin duty cycle
-DRIVE_INTERVAL_S = 0.4  # spin for this many seconds before pausing
-STOP_INTERVAL_S = 1.0   # pause for this many seconds before spinning again
+APPROACH_SPEED = 0.65   # 0..1; forward drive duty cycle while closing on the object
+APPROACH_STOP_M = 0.15  # stop driving when sonar reads this close
+APPROACH_TIMEOUT_S = 30.0  # abort approach if object is never reached
+DRIVE_INTERVAL_S = 0.4  # spin/drive for this many seconds before pausing
+STOP_INTERVAL_S = 1.0   # pause for this many seconds before spinning/driving again
 TOTAL_DEG = 360.0
 STOP_EARLY_DEG = 3.0    # cut spin power this many degrees early to allow coasting
 TURN_TIMEOUT_S = 60.0   # safety abort (raised: half the time is now spent paused)
@@ -91,6 +94,18 @@ def start_turn():
     _wheel(right, TURN_LEFT, FLIP_RIGHT)
 
 
+def drive_fwd():
+    """Drive straight forward at APPROACH_SPEED, respecting motor wiring flips."""
+    if not FLIP_LEFT:
+        left.forward(APPROACH_SPEED)
+    else:
+        left.backward(APPROACH_SPEED)
+    if not FLIP_RIGHT:
+        right.forward(APPROACH_SPEED)
+    else:
+        right.backward(APPROACH_SPEED)
+
+
 def halt():
     left.stop()
     right.stop()
@@ -105,6 +120,46 @@ def sonar_dist():
 
 def object_detected(dist):
     return dist is not None and dist < DETECT_THRESHOLD_M
+
+
+def approach():
+    """Drive toward the object using the same 1s-drive / 1s-pause rhythm as the spin.
+
+    Sonar is checked every tick; the rover stops the moment it reads <= APPROACH_STOP_M.
+    """
+    print(f"Approaching (stop at {APPROACH_STOP_M:.2f} m)...")
+    drive_fwd()
+    moving = True
+    phase_start = time.perf_counter()
+    t_ap = time.perf_counter()
+
+    while True:
+        now = time.perf_counter()
+
+        d = sonar_dist()
+        if d is not None and d <= APPROACH_STOP_M:
+            halt()
+            print(f"Reached object at {d:.3f} m.")
+            return
+
+        if now - t_ap > APPROACH_TIMEOUT_S:
+            halt()
+            print("Approach timed out.")
+            return
+
+        phase_elapsed = now - phase_start
+        if moving and phase_elapsed >= DRIVE_INTERVAL_S:
+            halt()
+            moving = False
+            phase_start = now
+            print(f"  pause  (sonar: {d:.3f} m)" if d is not None else "  pause")
+        elif not moving and phase_elapsed >= STOP_INTERVAL_S:
+            drive_fwd()
+            moving = True
+            phase_start = now
+            print(f"  drive  (sonar: {d:.3f} m)" if d is not None else "  drive")
+
+        time.sleep(0.005)
 
 
 class Heading:
@@ -157,7 +212,8 @@ try:
             dist = sonar_dist()
             if object_detected(dist):
                 halt()
-                print(f"Object at {dist:.3f} m after {h.deg:.1f}° — stopped.")
+                print(f"Object at {dist:.3f} m after {h.deg:.1f}° — starting approach.")
+                approach()
                 break
 
             # Alternate spin / pause every interval.
@@ -198,7 +254,8 @@ try:
             dist = sonar_dist()
             if object_detected(dist):
                 halt()
-                print(f"Object at {dist:.3f} m after ~{spun_s * TIMED_DEG_PER_S:.0f}° (timed) — stopped.")
+                print(f"Object at {dist:.3f} m after ~{spun_s * TIMED_DEG_PER_S:.0f}° (timed) — starting approach.")
+                approach()
                 break
 
             # Alternate spin / pause every interval; only count spinning time toward 360°.
