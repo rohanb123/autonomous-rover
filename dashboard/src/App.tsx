@@ -112,7 +112,7 @@ export default function App() {
   return (
     <div className="app">
       <header className="topbar">
-        <span className="brand">ARES SCOUT</span>
+        <span className="brand">GROVER</span>
         <RunPicker runs={runs} selected={runId} onSelect={(id) => { setPinned(true); setRunId(id); }} />
         <div className="mode">
           {(['live', 'replay'] as const).map((m) => (

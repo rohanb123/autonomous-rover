@@ -655,3 +655,69 @@ def test_closing_the_camera_stops_the_stream():
     camera.close()
     assert fake.encoder_stops >= 1 and fake.closed is True
     assert camera.backend == "none"
+
+
+# --- rotate_180: the nav camera is mounted upside down -------------------------------------
+
+
+def test_rotate_180_turns_a_frame_upside_down():
+    import numpy as np
+
+    from rover.camera import rotate_180
+
+    frame = np.arange(2 * 3 * 3, dtype=np.uint8).reshape(2, 3, 3)
+    out = rotate_180(frame)
+    assert out.flags["C_CONTIGUOUS"]
+    assert (out[0, 0] == frame[1, 2]).all() and (out[1, 2] == frame[0, 0]).all()
+
+
+def test_the_csi_path_rotates_in_software_without_libcamera(monkeypatch):
+    from dataclasses import replace
+
+    monkeypatch.setitem(sys.modules, "libcamera", None)  # import fails -> software path
+    fake = FakePicam2()
+    source = Picamera2Source(replace(CFG, rotate_180=True), fake)
+    assert "transform" not in fake.configured
+    marked = fake.capture_array("main")
+    marked[0, 0] = (1, 2, 3)
+    fake.capture_array = lambda stream="main": marked.copy()
+    ok, frame = source.read()
+    assert ok
+    assert tuple(int(c) for c in frame[-1, -1]) == (1, 2, 3)
+
+
+def test_the_csi_path_asks_the_isp_to_rotate_when_it_can(monkeypatch):
+    import types
+    from dataclasses import replace
+
+    class Transform:
+        def __init__(self, hflip: int = 0, vflip: int = 0) -> None:
+            self.hflip, self.vflip = hflip, vflip
+
+    monkeypatch.setitem(sys.modules, "libcamera", types.SimpleNamespace(Transform=Transform))
+
+    def create_video_configuration(main, lores=None, transform=None):
+        return {"main": dict(main), "lores": dict(lores or {}), "kind": "video", "transform": transform}
+
+    fake = FakePicam2()
+    fake.create_video_configuration = create_video_configuration
+    source = Picamera2Source(replace(CFG, rotate_180=True), fake)
+    t = fake.configured["transform"]
+    assert (t.hflip, t.vflip) == (1, 1)
+    ok, frame = source.read()
+    assert ok and int(frame[0, 0, 0]) == 200  # the ISP already rotated: no second flip
+
+
+def test_the_usb_path_rotates_when_asked():
+    import numpy as np
+    from dataclasses import replace
+
+    class Cap:
+        def read(self):
+            f = np.zeros((2, 2, 3), dtype=np.uint8)
+            f[0, 0] = 9
+            return True, f
+
+    source = OpenCvSource(0, replace(CFG, rotate_180=True), cap=Cap())
+    ok, frame = source.read()
+    assert ok and int(frame[1, 1, 0]) == 9 and int(frame[0, 0, 0]) == 0

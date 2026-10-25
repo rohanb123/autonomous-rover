@@ -44,6 +44,7 @@ from marsrover_shared.schemas import (
     StationUrls,
 )
 
+from .approx_bev import approx_station_bev
 from .fuse import DEFAULT_RES_M_PX, FuseError, fuse_run
 from .store import RunStore, StoreError, check_id, check_name
 from .tiles import bev_tile, thumb_b64
@@ -135,8 +136,22 @@ def create_app(store: RunStore | None = None, writer: Writer | None = None) -> F
     def process_station(st: StationJson, files: dict[str, bytes]) -> MapperStationReply:
         run_id, sid = st.run_id, st.station_id
         reupload = store.has_station(run_id, sid)
-        rel = store.save_station(run_id, st.model_dump(mode="json"), files)
         warnings: list[str] = []
+        # An uncalibrated Pi sends keyframes but no bev.png. Project the keyframes through a
+        # nominal camera so the map still shows what the rover saw (approx_bev.py, UNVERIFIED).
+        approx = False
+        if st.bev.file not in files:
+            views = [(kf.heading_deg, files[kf.file]) for kf in st.keyframes if kf.file in files]
+            if views:
+                try:
+                    files = {
+                        **files,
+                        st.bev.file: approx_station_bev(views, st.bev.res_m_px, st.bev.w_px),
+                    }
+                    approx = True
+                except ValueError as e:
+                    warnings.append(f"approximate BEV failed: {e}")
+        rel = store.save_station(run_id, st.model_dump(mode="json"), files)
         x, y, hdg = st.pose.x, st.pose.y, st.pose.heading_deg
 
         for kf in st.keyframes:
@@ -199,8 +214,9 @@ def create_app(store: RunStore | None = None, writer: Writer | None = None) -> F
             "station_stored",
             f"{'re-stored' if reupload else 'stored'} {sid}: {len(st.keyframes)} keyframes, "
             f"{len(crops)}/{len(st.proposals)} crops"
+            + ("; approximate map tile (camera not calibrated)" if approx else "")
             + (f"; {len(warnings)} warning(s)" if warnings else ""),
-            {"station_id": sid, "reupload": reupload, "warnings": warnings},
+            {"station_id": sid, "reupload": reupload, "warnings": warnings, "approx_bev": approx},
         )
         return MapperStationReply(
             ok=True,

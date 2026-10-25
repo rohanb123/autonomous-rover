@@ -1,4 +1,4 @@
-# 🔴 Ares Scout: a voice-tasked autonomous science rover (Cal Hacks)
+# 🔴 Grover: a voice-tasked autonomous science rover (Cal Hacks)
 
 > **One sentence, one science campaign.** You say *"Survey within a meter and a half, find the three most interesting rocks, sample them, and come home."* The rover then runs a small science campaign on its own. It **surveys** by spinning in place, **scores** every rock it sees, keeps the **top-k** in a heap, plans a **nearest-neighbor route**, drives to each rock, **scoops** it, holds it up to its camera for a (black-box) **analysis**, **drops** it, and **remembers where it has been** so it never revisits. Every decision is logged with a plain-language **reason**. All state streams into **SpacetimeDB**. One **dashboard** shows the run live, and after the run it replays the run on the **fused global map** the GX10 renders.
 
@@ -10,9 +10,9 @@ This repo is the team's **single ground truth**. Humans and coding agents both r
 
 NASA's **AEGIS** (Automated Exploration for Gathering Increased Science) lets Curiosity and Perseverance pick ChemCam/SuperCam laser targets on board without Earth in the loop ([JPL AEGIS on Perseverance](https://doi.org/10.48577/jpl.nymwbh)). AEGIS chooses **one target from one image** and then points an instrument at it.
 
-Ares Scout takes the same idea a few steps further, at hackathon scale:
+Grover takes the same idea a few steps further, at hackathon scale:
 
-| | AEGIS (real) | Ares Scout (ours) |
+| | AEGIS (real) | Grover (ours) |
 |---|---|---|
 | Tasking | Pre-uplinked parameters | **Plain-language voice mission** → parsed JSON parameters |
 | Targets per decision | 1 | **Top-k across a multi-station survey** (min-heap, deduped) |

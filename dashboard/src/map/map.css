@@ -28,7 +28,7 @@
   align-items: center;
   gap: 8px;
   font-size: 12px;
-  color: var(--muted, #9a8f85);
+  color: var(--muted, #fff);
   pointer-events: none;
 }
 .mapview-overlay button { pointer-events: auto; }
@@ -58,8 +58,8 @@
 .mapview-switch button {
   border: 0;
   background: transparent;
-  color: var(--muted, #9a8f85);
-  font: 500 11px var(--display, var(--font, sans-serif)); letter-spacing: 0.16em; text-transform: uppercase;
+  color: var(--muted, #fff);
+  font: 500 12px var(--display, var(--font, sans-serif)); letter-spacing: 0.16em; text-transform: uppercase;
   padding: 4px 10px;
   border-radius: 1px;
   cursor: pointer;
@@ -75,7 +75,7 @@
 .map3d { font: 300 12px var(--font, sans-serif); color: var(--text, #e8e1d9); }
 .map3d .mapview-canvas.map3d-pointer { cursor: pointer; }
 .map3d button {
-  font: 500 11px var(--display, var(--font, sans-serif)); letter-spacing: 0.16em; text-transform: uppercase;
+  font: 500 12px var(--display, var(--font, sans-serif)); letter-spacing: 0.16em; text-transform: uppercase;
   color: var(--text, #e8e1d9);
   background: rgba(0, 0, 0, 0.6);
   border: 1px solid var(--border, #36302b);
@@ -84,7 +84,7 @@
   cursor: pointer;
   backdrop-filter: blur(6px);
 }
-.map3d button:hover:not(:disabled) { border-color: var(--muted, #9a8f85); }
+.map3d button:hover:not(:disabled) { border-color: var(--muted, #fff); }
 .map3d button:disabled { opacity: 0.45; cursor: default; }
 
 .map3d-labels {
@@ -105,7 +105,7 @@
   width: 16px;
   line-height: 16px;
   text-align: center;
-  font: 600 11px var(--mono, monospace);
+  font: 600 12px var(--mono, monospace);
   color: #000;
 }
 .map3d-label-next {
@@ -113,7 +113,7 @@
   translate: -50% 0;
   padding: 2px 8px;
   border-radius: 1px;
-  font: 600 11px var(--mono, monospace);
+  font: 600 12px var(--mono, monospace);
   letter-spacing: 0.02em;
   color: #000;
   background: var(--live, #cfe6ff);
@@ -135,8 +135,8 @@
 }
 .map3d-tooltip .t-head { display: flex; justify-content: space-between; gap: 12px; margin-bottom: 2px; }
 .map3d-tooltip .t-head b { font-family: var(--mono, monospace); font-weight: 600; }
-.map3d-tooltip .t-status { font-weight: 600; text-transform: capitalize; color: var(--muted, #9a8f85); }
-.map3d-tooltip .t-row { color: var(--muted, #9a8f85); }
+.map3d-tooltip .t-status { font-weight: 600; text-transform: capitalize; color: var(--muted, #fff); }
+.map3d-tooltip .t-row { color: var(--muted, #fff); }
 
 .map3d-controls {
   position: absolute;
@@ -170,7 +170,7 @@
 .map3d-dial-y { stroke: #7fb2e5; stroke-width: 2.4; stroke-linecap: round; }
 .map3d-dial-ydot { fill: #7fb2e5; }
 .map3d-dial-hub { fill: var(--text, #e8e1d9); }
-.map3d-dial-key { font: 600 11px var(--mono, monospace); color: var(--muted, #9a8f85); display: flex; align-items: center; gap: 4px; }
+.map3d-dial-key { font: 600 12px var(--mono, monospace); color: var(--muted, #fff); display: flex; align-items: center; gap: 4px; }
 .map3d-dial-key i { display: inline-block; width: 8px; height: 8px; border-radius: 50%; }
 .map3d-dial-key i.kx { background: var(--accent, #e07a3f); }
 .map3d-dial-key i.ky { background: #7fb2e5; margin-left: 4px; }
@@ -181,7 +181,7 @@
   bottom: 12px;
   translate: -50% 0;
   font: 11px var(--mono, monospace);
-  color: var(--muted, #9a8f85);
+  color: var(--muted, #fff);
   pointer-events: none;
   text-shadow: 0 1px 2px #000;
 }
@@ -205,13 +205,13 @@
   background: transparent;
   backdrop-filter: none;
   padding: 6px 10px;
-  color: var(--muted, #9a8f85);
+  color: var(--muted, #fff);
 }
 .map3d-legend-toggle::after { content: ' ▾'; }
 .map3d-legend.closed .map3d-legend-toggle::after { content: ' ▸'; }
 .map3d-legend ul { list-style: none; margin: 0; padding: 0 10px 8px; display: grid; gap: 4px; }
 .map3d-legend li { display: flex; align-items: center; gap: 6px; color: var(--text, #e8e1d9); }
-.map3d-legend li.hint { color: var(--muted, #9a8f85); font-size: 11px; margin-top: 4px; }
+.map3d-legend li.hint { color: var(--muted, #fff); font-size: 11px; margin-top: 4px; }
 .map3d-legend .sw { display: inline-block; flex: none; width: 10px; height: 10px; border-radius: 50%; }
 .map3d-legend .sw.rover { width: 14px; height: 9px; border-radius: 2px 7px 7px 2px; background: #e07a3f; }
 .map3d-legend .sw.pulse { border: 2px solid #ffcc80; box-shadow: 0 0 0 2px rgba(255, 204, 128, 0.3); }
@@ -226,4 +226,4 @@
 }
 
 /* Shell theme: treat the map like hero imagery: dark, high-contrast, low saturation. */
-.mapview-canvas { filter: saturate(0.3) contrast(1.18) brightness(0.8); }
+.mapview-canvas { filter: saturate(0.6) contrast(1.1) brightness(1.05); }

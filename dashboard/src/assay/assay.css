@@ -5,7 +5,7 @@
   padding: 4px 8px;
   border: 1px solid var(--bad);
   color: var(--bad);
-  font: 500 10px var(--display);
+  font: 500 12px var(--display);
   letter-spacing: 0.22em;
   text-transform: uppercase;
 }
@@ -14,7 +14,7 @@
 .cuvette { width: 72px; height: auto; color: var(--muted); display: block; }
 .cuvette-liquid { transition: fill 1.5s cubic-bezier(0, 0, 0.58, 1); }
 .cuvette-liquid.snap { transition: none; }
-.cuvette-wrap figcaption { margin-top: 4px; color: var(--muted); font-size: 10px; line-height: 1.3; }
+.cuvette-wrap figcaption { margin-top: 4px; color: var(--muted); font-size: 12px; line-height: 1.3; }
 .bradford-readout p { margin: 0 0 2px; }
 .bradford-conc { font: 22px/1.2 var(--mono); color: var(--text); }
 .bradford-verdict { margin-top: 6px; font: 600 13px var(--display); letter-spacing: 0.24em; color: var(--accent); }
@@ -24,14 +24,14 @@
 .curve svg { width: 100%; height: auto; display: block; }
 .curve-band { fill: var(--accent); opacity: 0.12; }
 .curve-axis { stroke: var(--border); stroke-width: 1; }
-.curve-tick { fill: var(--muted); font-size: 9px; font-family: var(--mono); }
+.curve-tick { fill: var(--muted); font-size: 12px; font-family: var(--mono); }
 .curve-fit { fill: none; stroke: var(--text); stroke-width: 1.5; }
 .curve-ext { fill: none; stroke: var(--muted); stroke-width: 1; stroke-dasharray: 3 3; }
 .curve-rep { fill: var(--muted); }
 .curve-mean { fill: var(--text); }
 .curve-guide { stroke: var(--accent); stroke-width: 1; stroke-dasharray: 2 2; }
 .curve-sample { fill: var(--accent); }
-.curve-cite { margin: 2px 0 0; color: var(--muted); font-size: 10px; line-height: 1.3; }
+.curve-cite { margin: 2px 0 0; color: var(--muted); font-size: 12px; line-height: 1.3; }
 
 .verdict-track { position: relative; display: flex; height: 10px; border-radius: 0; overflow: hidden; }
 .zone-below { background: var(--grey-panel, #1a1a1a); }
@@ -41,7 +41,7 @@
   position: absolute; top: -3px; width: 2px; height: 16px; background: var(--text); box-shadow: 0 0 8px rgba(255, 255, 255, 0.6);
   transform: translateX(-1px);
 }
-.verdict-labels { display: flex; justify-content: space-between; color: var(--muted); font-size: 10px; margin-top: 2px; }
+.verdict-labels { display: flex; justify-content: space-between; color: var(--muted); font-size: 12px; margin-top: 2px; }
 
 @media (prefers-reduced-motion: reduce) {
   .cuvette-liquid { transition: none; }
