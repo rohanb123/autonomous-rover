@@ -63,7 +63,8 @@ def start_camera():
         cam = Picamera2()
         cam.configure(cam.create_video_configuration(main={"size": (640, 480), "format": "RGB888"}))
         cam.start()
-        time.sleep(0.5)  # brief settle; full second not needed after gyro cal
+        cam.capture_array()  # request a frame immediately; PiSP kills the pipeline after 1 s idle
+        time.sleep(0.5)
         print("Camera ready.")
     except Exception as e:
         cam = None
