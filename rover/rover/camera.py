@@ -38,6 +38,7 @@ from __future__ import annotations
 
 import contextlib
 import logging
+import threading
 import time
 from dataclasses import replace
 from typing import Any, Protocol
@@ -533,6 +534,10 @@ class Camera:
         self.exposure_locked = False
         self.white_balance_locked = False
         self.focus_locked = False
+        # Two threads read: the op worker (grab, for stations) and snapshot_server (grab_lores,
+        # via to_thread). On a USB camera read_lores() IS read(), and cv2.VideoCapture is not
+        # safe to read concurrently -- so serialize. A station's flush holds it ~130 ms.
+        self._read_lock = threading.Lock()
 
     @property
     def present(self) -> bool:
@@ -588,9 +593,10 @@ class Camera:
             # Auto-exposure needs time to converge after the rover turns, or the keyframe
             # comes out of a different exposure than its neighbours (docs/05 U-21 default).
             time.sleep(self.cfg.settle_s)
-        for _ in range(max(0, self.cfg.flush_frames)):
-            self._source.read()
-        ok, frame = self._source.read()
+        with self._read_lock:
+            for _ in range(max(0, self.cfg.flush_frames)):
+                self._source.read()
+            ok, frame = self._source.read()
         if not ok or frame is None:
             raise CameraError("capture failed; the camera may need re-opening")
         return frame
@@ -604,7 +610,8 @@ class Camera:
         """
         if not self.present:
             raise CameraError("no camera: nothing to stream")
-        ok, frame = self._source.read_lores()
+        with self._read_lock:
+            ok, frame = self._source.read_lores()
         if not ok or frame is None:
             raise CameraError("lores capture failed")
         return frame
