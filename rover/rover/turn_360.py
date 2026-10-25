@@ -17,7 +17,7 @@ import time
 from gpiozero import Motor
 
 # ---- settings ----
-TURN_SPEED = 0.7  # 0..1; full power on a 9V battery (it sags under load, motors see ~5-6V)
+TURN_SPEED = 0.65  # 0..1; full power on a 9V battery (it sags under load, motors see ~5-6V)
 STEP_DEG = 45.0
 TOTAL_DEG = 360.0
 PAUSE_S = 1.0
