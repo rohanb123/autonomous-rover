@@ -22,7 +22,7 @@ from gpiozero import Motor
 
 # ---- motor / turn settings ----
 TURN_SPEED = 0.65       # 0..1; spin duty cycle
-DRIVE_INTERVAL_S = 0.2  # spin for this many seconds before pausing
+DRIVE_INTERVAL_S = 0.4  # spin for this many seconds before pausing
 STOP_INTERVAL_S = 1.0   # pause for this many seconds before spinning again
 TOTAL_DEG = 360.0
 STOP_EARLY_DEG = 3.0    # cut spin power this many degrees early to allow coasting
