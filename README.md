@@ -1,121 +1,99 @@
-# 🔴 Grover: a voice-tasked autonomous science rover (Cal Hacks)
+## Inspiration
 
-> **One sentence, one science campaign.** You say *"Survey within a meter and a half, find the three most interesting rocks, sample them, and come home."* The rover then runs a small science campaign on its own. It **surveys** by spinning in place, **scores** every rock it sees, keeps the **top-k** in a heap, plans a **nearest-neighbor route**, drives to each rock, **scoops** it, holds it up to its camera for a (black-box) **analysis**, **drops** it, and **remembers where it has been** so it never revisits. Every decision is logged with a plain-language **reason**. All state streams into **SpacetimeDB**. One **dashboard** shows the run live, and after the run it replays the run on the **fused global map** the GX10 renders.
+NASA's Curiosity and Perseverance rovers run a system called **AEGIS** that lets them pick science targets by themselves. Without waiting about 20 minutes for Earth to reply, the rover looks at an image, picks the most interesting rock, and points its laser at it. We found that amazing, but also limited: **one image, one target, one instrument**, and the parameters are uploaded in advance by engineers.
 
-This repo is the team's **single ground truth**. Humans and coding agents both read it. Start with [AGENTS.md](AGENTS.md).
+So we asked: what if you could just *talk* to a rover? You'd tell it **"Survey within a meter and a half, find the three most interesting rocks, sample them, and come home,"** and it would run a whole science campaign on its own. It would explain every decision, and the whole team could watch it live from "Earth".
 
----
+That's **Grover**.
 
-## Why this is different (our differentiator)
+## What it does
 
-NASA's **AEGIS** (Automated Exploration for Gathering Increased Science) lets Curiosity and Perseverance pick ChemCam/SuperCam laser targets on board without Earth in the loop ([JPL AEGIS on Perseverance](https://doi.org/10.48577/jpl.nymwbh)). AEGIS chooses **one target from one image** and then points an instrument at it.
+Grover is a **voice-tasked autonomous science rover**. You give it a mission in plain English and it does the rest:
 
-Grover takes the same idea a few steps further, at hackathon scale:
+1. **Understands the mission.** Push-to-talk on the dashboard sends your voice to **Grok's speech-to-text**. Grok then parses it into a validated mission: search radius, number of rocks, what to look for. You can also type it. If the internet drops, a local **faster-whisper** model and a regex parser take over.
+2. **Surveys.** At each survey station, Grover spins in place in 8 steps of 45° and takes a photo at each one. It stitches the photos into a **bird's-eye-view ground map** and finds rocks with a classical vision pipeline inspired by Mars rover target finding.
+3. **Scores every rock** with a model trained on **real Mars data**:
+   `0.35·novelty + 0.25·visual interest + 0.15·pickability + 0.15·category prior − 0.10·distance`
+   The category priors come from what real scientists and AEGIS chose in the public **ChemCam target list**.
+4. **Plans and executes.** It keeps the best *k* rocks in a min-heap, removes duplicates, plans a nearest-neighbour route, drives to each rock, and takes a close-up "sample" photo.
+5. **Remembers where it has been.** Every visited spot gets an exclusion radius, so Grover never re-samples the same place.
 
-| | AEGIS (real) | Grover (ours) |
-|---|---|---|
-| Tasking | Pre-uplinked parameters | **Plain-language voice mission** → parsed JSON parameters |
-| Targets per decision | 1 | **Top-k across a multi-station survey** (min-heap, deduped) |
-| Movement | Points a mast instrument | **Plans and drives a multi-target route** (nearest neighbor) |
-| Interaction | Remote laser (LIBS) | **Physical sampling**: scoop → present to camera → drop |
-| Memory | n/a | **Visited set with exclusion radius**, stored in SpacetimeDB |
-| Explainability | Ranked internally | **Per-target reason string** ("novel texture, pickable size, matches 'float rock'") |
-| Calibration | Hand-tuned by the team | **Category priors from real scientist and AEGIS choices** in the public ChemCam master list ([docs/03](docs/03-space-data-and-training.md)) |
+Everything streams live into **SpacetimeDB**. One dashboard shows the run as it happens: rover position and trail, the task queue, the top-*k* rocks with scores and reasons, visited rings, live camera frames, health, and an **E-STOP**. Afterwards, the same dashboard **replays the entire run** on an interactive **3D map** of the arena.
 
-## Features
+## How we built it
 
-- 🎙️ **Voice missions**: push-to-talk in the dashboard → **Grok (xAI)** transcribes it and parses it into a validated `mission` JSON with structured outputs. Text input works too. **Offline backup:** if Grok is unreachable, `faster-whisper` transcribes locally on the GX10 and a regex parser extracts the mission.
-- 🔄 **Autonomous look-around**: rotate-in-place survey stations (8 × 45°) with one fixed camera. There is no head tracking and no pan servo ([why](docs/01-hardware-and-assembly.md#look-around-decision)).
-- 🗺️ **Local maps on the rover**: each station produces keyframes, a bird's-eye-view (BEV) ground tile, a pose and rock proposals. These are stored on the Pi's SD card and uploaded to the GX10.
-- 🌍 **Global map on the GX10**: pose-graph-refined fusion of all station tiles into a global mosaic. The mosaic is stored in SpacetimeDB and rendered in the dashboard.
-- 🧠 **Science scoring**: `0.35·novelty + 0.25·visual + 0.15·pickable + 0.15·category − 0.10·distance`. It uses embeddings plus logistic-regression heads trained on real Mars data (MSL labeled set, AI4Mars) and ChemCam/AEGIS target-type priors.
-- 🏔️ **Top-k min-heap, dedupe, nearest-neighbor route, exclusion radius**: the rover never re-samples a spot.
-- 🥄 **2-servo scoop**: scoop → present → "analyze" (placeholder record, clearly labeled simulated) → drop → mark visited.
-- 🧪 **Simulated Bradford protein assay per soil sample** (proof of concept, no wet lab). Each sample gets a deterministic simulated Coomassie G-250 assay, seeded by `sample_id` and biased by interest score. Replay shows a cuvette turning brown → blue, the simulated A595, a BSA standard curve with the sample plotted, the concentration in µg/mL and a verdict band. Real parameters come from vendor manuals: 595 nm, BSA standards 0–2000 µg/mL, linear range 125–1000 µg/mL ([P3 brief](docs/roles/P3-perception-ai.md#bradford-assay-simulator)). Every view is labeled **"SIMULATED — proof of concept"**.
-- ⏯️ **Quick commands**: `pause`, `resume`, `stop`, `skip`, `status`, `come back`, plus an **E-STOP** that goes straight to the rover.
-- 📊 **One dashboard, two modes** ([spec](docs/06-dashboard.md)):
-  - **Live**: pose and trail on the map as local tiles arrive, the mission and its parsed parameters, task queue and top-k with scores and reasons, visited circles, the latest keyframe, health, connection status and E-STOP.
-  - **Replay**: the fused global map, a scrubbable timeline, and click-a-pin for photo, score, reason, analysis and the simulated Bradford assay panel.
-- 🗄️ **SpacetimeDB as the system of record** (sponsor track). It has a TypeScript module, and the dashboard is driven by subscriptions. Python services write through the documented HTTP reducer API ([docs/02](docs/02-spacetimedb.md)).
-- 🪐 **Real space data** (SpaceXSI track): AI4Mars, the MSL Curiosity labeled set, the ChemCam master observation list (including AEGIS-selected targets), and the JPL raw-image feeds.
+**Hardware**
+- 3D-printed chassis
+- Raspberry Pi 5
+- Camera Module 3
+- MPU-6050 IMU (heading)
+- HC-SR04 ultrasonic rangefinder
+- L293D motor driver
+- An **ASUS Ascent GX10** (NVIDIA GB10) as the "mission control" computer
 
-## Rover & Dashboard
-![Rover](assets/grover_rover.jpeg)
-![Dashboard](assets/grover_dashboard.png)
+**The architecture has two machines:**
+- **Rover (Pi):** motion, safety watchdog, station survey, ground-image warping, rock finding, a store-and-forward upload queue on the SD card, and a live MJPEG camera stream
+- **GX10:** the **brain** (mission state machine, planner, heap, rover link, voice), a React + Vite dashboard with **audio input via Bluetooth** headphones, **vision** (embeddings and scoring), the **mapper** (ingest and global map fusion), and **SpacetimeDB**
 
+### SpacetimeDB is the system of record
 
-## Architecture
+SpacetimeDB isn't a logging add-on. **It is the live shared state of the whole mission.** We wrote a TypeScript module with **13 public tables** and **17 reducers**. Every process writes to it, and the dashboard renders straight from subscriptions:
 
-```mermaid
-flowchart LR
-  subgraph Earth["🌎 'Earth' (laptop browser)"]
-    DASH["Dashboard (React+Vite)<br/>live + replay<br/>voice PTT, quick cmds, E-STOP"]
-  end
-  subgraph GX10["🖥️ ASUS Ascent GX10 192.168.50.10"]
-    BRAIN["brain :8000<br/>mission FSM, planner, heap,<br/>dedupe, rover link"]
-    VOICE["voice (in brain proc)<br/>Grok STT + parse → mission JSON<br/>offline: faster-whisper + regex"]
-    VISION["vision :8100<br/>embeddings, heads, novelty,<br/>analyze (black box) + Bradford sim"]
-    MAPPER["mapper :8200<br/>station ingest, file store,<br/>global fusion, tiles"]
-    OVER["overhead :8300<br/>ArUco fallback pose"]
-    STDB[("SpacetimeDB :3000<br/>module 'marsrover' (TS)")]
-    OLLAMA["Ollama :11434<br/>(optional captions)"]
-  end
-  subgraph Rover["🤖 Rover: Raspberry Pi 192.168.50.20"]
-    RT["rover runtime<br/>WS :8765 /rover, snapshot :8080<br/>motion, scoop, IMU, camera,<br/>station capture, BEV, proposals,<br/>local store"]
-  end
-  DASH -- "REST/WS commands<br/>(mission, quick, estop)" --> BRAIN
-  DASH -- "WebSocket subscriptions (read-only)" --> STDB
-  DASH -- "HTTP GET images" --> MAPPER
-  BRAIN <-- "WS cmd/ack/done/telemetry" --> RT
-  RT -- "POST /ingest/station, /ingest/sample" --> MAPPER
-  BRAIN -- "/score, /analyze" --> VISION
-  BRAIN --> VOICE -- "HTTPS (needs internet)" --> GROK[("xAI Grok API")]
-  VISION -. "captions (optional)" .-> OLLAMA
-  OVER -- "pose WS" --> BRAIN
-  BRAIN -- "HTTP /v1/database/marsrover/call/*" --> STDB
-  MAPPER -- "HTTP call reducers" --> STDB
-```
-
-## Team (each area has a default owner; anyone may work on any area, with a heads-up)
-
-| Who | Role | Owns |
-|---|---|---|
-| **P1** | Hardware (pure HW) | Chassis, motors, power, wiring harness, scoop mechanism, camera mast, IMU mount, ArUco markers, overhead camera stand, test arena, sample rocks, arena photo labels → [P1](docs/roles/P1-hardware.md) |
-| **P2** | Rover runtime (hybrid) | Everything that runs on the Pi: motors, servos, IMU, camera, motion primitives, heading/VO, station capture, local store, uploader, safety; calibration; `gx10/overhead/` → [P2](docs/roles/P2-rover-runtime.md) |
-| **P3** | Perception & AI (hybrid) | `ml/` training on space data, `gx10/vision/` (scoring + analyze), `gx10/mapper/` (ingest + global fusion), dashboard **map layer** `dashboard/src/map/`, the **simulated Bradford assay** end to end (`gx10/vision/bradford_sim.py` + `dashboard/src/assay/`), and on the Pi the BEV ground image + rock proposals (`rover/rover/bev.py`, `proposals.py`) → [P3](docs/roles/P3-perception-ai.md) |
-| **P4** | Brain & data lead (SW/backend) | Contracts, `shared/`, `gx10/brain/` (FSM, planner, heap, rover link, voice ASR/NLU), `spacetimedb/` module, dashboard app shell and all panels except map and assay, integration, scripts → [P4](docs/roles/P4-brain-data.md) |
-
-## Quickstart (once code exists)
-
-```bash
-# GX10 (192.168.50.10)
-curl -sSf https://install.spacetimedb.com | sh               # SpacetimeDB CLI (aarch64 Linux build exists)
-spacetime start --listen-addr 0.0.0.0:3000                     # foreground; separate terminal
-./scripts/publish_stdb.sh                                      # publish module 'marsrover' to local
-./scripts/gen_bindings.sh                                      # TS bindings → dashboard/src/module_bindings
-./scripts/dev_up.sh                                            # brain:8000 vision:8100 mapper:8200 overhead:8300
-# Pi (192.168.50.20)
-cd rover && python -m rover.main --config calib/calib.yaml
-# Laptop
-cd dashboard && npm install && npm run dev                     # http://localhost:5173
-```
-
-Without hardware, `python mocks/fake_rover.py` stands in for the Pi. See [docs/04](docs/04-integration-timeline.md).
-
-## Docs map
-
-| Doc | What it is |
+| Feature | SpacetimeDB tables / reducers |
 |---|---|
-| [AGENTS.md](AGENTS.md) | Rules for humans and agents: ground truth, conventions, change control |
-| [docs/00-overview-and-contracts.md](docs/00-overview-and-contracts.md) | **Contracts**: network, ports, frames/units, IDs, every JSON schema, timing, state machine |
-| [docs/01-hardware-and-assembly.md](docs/01-hardware-and-assembly.md) | Full BOM by subsystem and location, power, pinout, scoop mechanics, assembly |
-| [docs/02-spacetimedb.md](docs/02-spacetimedb.md) | SpacetimeDB design: tables, reducers, writers, subscriptions, commands, pitfalls |
-| [docs/03-space-data-and-training.md](docs/03-space-data-and-training.md) | Public datasets (URLs, sizes, licenses) and what we train in 36 h |
-| [docs/04-integration-timeline.md](docs/04-integration-timeline.md) | 36 h plan, integration milestones I0–I5, mocks |
-| [docs/05-unknowns-and-risks.md](docs/05-unknowns-and-risks.md) | Unknowns (how and when to resolve) and risk register |
-| [docs/06-dashboard.md](docs/06-dashboard.md) | Dashboard: stack, layout, components, data bindings, owners, tests |
-| [docs/sources.md](docs/sources.md) | Every external source we relied on |
-| [docs/TEAM.md](docs/TEAM.md) | Who is P1–P4, and the kickoff prompt each person gives their coding agent |
-| [docs/roles/](docs/roles/) | One self-contained brief per person |
+| **Live location and trail** | `pose` via `insert_pose` (rate-limited at 2 Hz), and `rover_status` via `upsert_rover_status` (link health, state machine state, E-STOP) |
+| **Rock queue and ranking** | `candidate` via `upsert_candidate` (score components, rank, reason), and `task_queue` via `upsert_task` (the live plan, reordered as the heap changes) |
+| **Mission from voice** | `mission` via `upsert_mission` (parsed parameters plus any assumptions Grok made) |
+| **Never revisit a spot** | `visit` via `mark_visited` (location, exclusion radius, outcome). The planner and the 3D map both read it. |
+| **Maps** | `keyframe`, `local_map_tile` and `global_tile` via the `upsert_*` reducers, written by the mapper as each station arrives and after global fusion |
+| **Science results** | `analysis_record` via `add_analysis`, which holds the simulated Bradford assay. The reducer **rejects any record not marked `simulated`**, so fake data can never pass as real. |
+| **Telemetry and explainability** | `telemetry` (IMU, sonar range, upload backlog), and `event` via `log_event` (every decision and error, in plain language) |
+| **Runs and replay** | `run` via `start_run`, `end_run` and `set_run_fused`. Our replay tool re-sends a recorded run's writes into a fresh database, so the dashboard's replay mode uses exactly the same code as live mode. |
+| **Security** | A private `writer` table with `claim_writer` and `add_writer`. Only the brain and mapper identities can write. The dashboard connects anonymously and is **read-only by design**. |
 
-*Planned with Grok Bot; built with Cursor.*
+The Python services write over SpacetimeDB's HTTP reducer API through a small client with rate-limited, coalescing writers, so a burst of telemetry never floods the database. The dashboard never polls the rover: **if it's in SpacetimeDB, it's on screen within milliseconds.**
+
+### Grok and the xAI ecosystem
+
+- **Grok Bot** was our planning partner from hour zero. We used it to write the full spec: contracts, the data schema, the network map, the role briefs for all four teammates, and the risk register. It became the repo's "single ground truth".
+- **Grok voice:** xAI's **speech-to-text API** transcribes the push-to-talk mission. We bias it towards our rock vocabulary.
+- **Grok parsing:** Grok turns the transcript into a mission object using a **strict JSON schema**. Every value it defaulted or clamped is listed in an `assumptions` field and shown to the operator.
+
+### Claude and Cursor
+
+- **Claude Code** and **Cursor** worked as our pair-programmers on every subsystem. It built the WebGL 3D map, the bird's-eye-view warping and rock finder, the vision service, and the brain's state machine fixes, each with tests. We gave it a rulebook (`AGENTS.md`): area owners, contracts that can't silently change, and "ask before guessing hardware specs". It flagged unconfirmed camera details instead of inventing them, and it refused to let unbuilt rover features return fake "success" codes.
+
+### Perception and ML on real space data
+
+- **Embeddings:** SigLIP ViT-B/16, with logistic-regression heads trained on the **MSL Curiosity labeled image set** and **AI4Mars** terrain labels. The visual-interest head reaches **0.99 test AUC**.
+- **Category priors:** built from the **ChemCam master observation list**, including targets AEGIS chose.
+- **Rock finding on the Pi:** "Rockster-lite", which uses gradient-adaptive edge detection, contour filtering on solidity, elongation and contrast, and a ground-plane homography. It measures a 10 cm square at 10 ± 1 cm.
+- **3D map:** **WebGL2** with no 3D library. It has orbit controls, ground tiles placed exactly in the mission frame, rock pins, visited rings and the rover trail.
+
+## Challenges we ran into
+
+- **Attempting to incorporate a 3-device network.** While we originally planned to reserve the Pi for control, the GX10 for compute, and a laptop for display, we ended up combining the latter two due to technical complexities and to minimize confusion.
+- **ARM64 everything.** Installing PyTorch, OpenCV and GPIO libraries on ARM64 Linux (GX10 and Pi) meant broken wheel builds, missing system libraries (`lgpio`), and half-finished installs.
+- **Changing the hardware mid-hackathon.** Our 2-servo scoop wasn't going to be reliable in time. We cut it and moved the whole system to version 2.0 of our data contract: a camera close-up `sample` op instead of the scoop, and a sonar `range_m` field. That change touched the rover, brain, database and dashboard at once.
+- **Getting frames right.** Mission frame, rover frame, image pixels and ground pixels all have to agree. One stale heading after a survey spin made every later leg go the wrong way until we found and fixed it.
+
+## Accomplishments that we're proud of
+
+- A **full voice-to-rover loop**: speak a mission, watch Grover survey, rank rocks, drive and sample, live on the dashboard.
+- Using **SpacetimeDB as the real backbone**. Live mode and replay use the same data and the same code.
+- **Real Mars science data** shaping the decisions, not hand-picked weights.
+- A **from-scratch WebGL 3D map** that turns a run into something you can interact with and review.
+- **Safety first.** There's a 1-second link watchdog, and the E-STOP goes straight to the rover.
+
+## What we learned
+
+- **Contracts first.** Writing the schemas and the network map *before* the code, with Grok Bot's help, let four people build in parallel and still fit together.
+- A **real-time database changes how you build a UI**: subscribe, don't poll. The dashboard became much simpler.
+- **AI coding tools are most useful when you give them rules.** Claude did its best work when it knew who owned what, and that it must ask instead of guessing.
+- **Hardware is the long pole.** Networking, drivers and calibration took longer than any algorithm.
+
+## What's next for Grover
+
+- **On board Life Detection payload and analysis**, we'd love to incorporate a sample collector (scooping arm or drill) that is able to filter the sample through a Bradford Assay and spectrophotometer.
+- **Multi-rover campaigns** sharing one SpacetimeDB, so rovers split the survey area and never sample each other's spots.
+- **Fully offline field mode.** Captions run on the GX10, voice is already offline-capable, and nothing needs the internet.
