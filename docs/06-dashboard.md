@@ -27,7 +27,7 @@ Env: `VITE_STDB_URI=ws://192.168.50.10:3000`, `VITE_STDB_DB=marsrover`, `VITE_BR
 ├──────────────────────────────────────────────┬───────────────────────────────────────────────┤
 │                                              │ MissionPanel                                  │
 │                                              │  "Survey 1.5 m, top 3 rocks…"  radius 1.5     │
-│              MapView (P3)                    │  k 3 · cats float_rock · act · assumptions    │
+│              MapView (P3)                    │  k 3 · cats float_rock · act                  │
 │   tiles · trail · rover glyph · stations     │  [🎙 hold to talk] [text box ⏎]               │
 │   candidate pins (rank #) · exclusion rings  ├───────────────────────────────────────────────┤
 │   scale bar · north/+x arrow · zoom/pan      │ TaskQueuePanel (top-k + queue)                │
@@ -92,7 +92,7 @@ Row types come from `module_bindings`.
 | TopBar / RunPicker | P4 | `run` | `POST /api/run/start`, `/api/run/end` | RunPicker lists runs newest first |
 | ConnectionBadge | P4 | `rover_status.updatedUnix` | `GET /api/health` (every 2 s) | STDB: connect/disconnect callbacks. Rover: stale if `now − updatedUnix > 2 s`. Brain: health fetch fails → red |
 | EStopButton | P4 | `rover_status.estop` | `POST /api/estop`, `/api/estop/clear` | Always enabled in live mode; bypasses the FSM and goes straight to the rover; keyboard: Space bar (with confirm on clear only) |
-| MissionPanel + VoiceButton | P4 | `mission` | `/api/mission/voice`, `/api/mission/text`, `/api/approve` | Shows parsed params and `assumptions` |
+| MissionPanel + VoiceButton | P4 | `mission` | `/api/mission/voice`, `/api/mission/text`, `/api/approve` | Shows parsed params (not the NLU `assumptions`) |
 | TaskQueuePanel | P4 | `task_queue`, `candidate` (rank ≥ 0) | — | Top-k sorted by rank with score, category, reason; queue below |
 | KeyframePanel | P4 | `keyframe` (latest by tUnix) | — | `data:image/jpeg;base64,` + thumbB64; click → open `url` |
 | QuickBar | P4 | `rover_status.fsmState` | `/api/quick` | Disabled in replay |
