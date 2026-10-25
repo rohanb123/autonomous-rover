@@ -4,10 +4,15 @@
 Uses the MPU6050 gyro (z axis) to measure the turn, the same idea as the station spin in the
 P2 role doc. If the IMU isn't found, it falls back to timed turns (much less accurate).
 
+The HC-SR04 sonar reads distance at every stop. The step with the shortest reading (if it
+drops below DETECT_RATIO × baseline) is flagged as the object direction. After the full 360°
+the rover turns that many 45° steps to face the object and stops.
+
 Wiring (see the rover wiring diagrams):
   Left motor  (L293D pins 3/6):   EN1,2 -> GPIO12, 1A -> GPIO5,  2A -> GPIO6
   Right motor (L293D pins 11/14): EN3,4 -> GPIO13, 3A -> GPIO20, 4A -> GPIO21
   MPU6050: SDA -> GPIO2, SCL -> GPIO3, VCC -> 3V3, address 0x68 (I2C enabled)
+  HC-SR04:  TRIG -> GPIO23, ECHO -> GPIO24, VCC -> 5V
 
 Keep the rover still for the first 2 s (gyro calibration). Ctrl+C stops the motors.
 """
@@ -28,6 +33,12 @@ FLIP_LEFT = False  # same meaning as in motor_obstacle_flipped.py
 FLIP_RIGHT = False
 TIMED_DEG_PER_S = 90.0  # only used without the IMU; measure and adjust
 
+# ---- sonar settings ----
+SONAR_TRIG = 23
+SONAR_ECHO = 24
+SONAR_SAMPLES = 5    # readings averaged at each stop (one every 50 ms = 250 ms total)
+DETECT_RATIO = 0.75  # flag if distance < baseline × this (object is at least 25% closer)
+
 left = Motor(forward=6, backward=5, enable=12)
 right = Motor(forward=20, backward=21, enable=13)
 
@@ -47,6 +58,15 @@ try:
 except Exception as e:
     bus = None
     print(f"IMU not available ({e}); using timed turns instead.")
+
+# ---- sonar ----
+sonar = None
+try:
+    from gpiozero import DistanceSensor
+    sonar = DistanceSensor(echo=SONAR_ECHO, trigger=SONAR_TRIG, max_distance=4.0)
+    print("Sonar ready.")
+except Exception as e:
+    print(f"Sonar not available ({e}); distance detection disabled.")
 
 
 def gz_dps():
@@ -73,6 +93,19 @@ def start_turn():
 def halt():
     left.stop()
     right.stop()
+
+
+def read_dist_m():
+    """Average SONAR_SAMPLES sonar readings. Returns metres, or None if sonar unavailable."""
+    if sonar is None:
+        return None
+    readings = []
+    for _ in range(SONAR_SAMPLES):
+        d = sonar.distance  # gpiozero returns 0..max_distance in metres
+        if d is not None:
+            readings.append(d)
+        time.sleep(0.05)
+    return sum(readings) / len(readings) if readings else None
 
 
 class Heading:
@@ -110,8 +143,24 @@ class Heading:
             time.sleep(0.005)
 
 
+def _check_dist(k, dist, baseline_dist, flagged_step, min_dist):
+    """Update (flagged_step, min_dist) if this step's distance beats the current minimum."""
+    if dist is not None and baseline_dist is not None and dist < baseline_dist * DETECT_RATIO:
+        if dist < min_dist:
+            return k, dist
+    return flagged_step, min_dist
+
+
 steps = int(TOTAL_DEG / STEP_DEG)
+flagged_step = None
+min_dist = float("inf")
+
 try:
+    # Take a baseline reading before the scan. Open-space distance the rover sees at rest.
+    baseline_dist = read_dist_m()
+    if baseline_dist is not None:
+        print(f"Baseline distance: {baseline_dist:.3f} m")
+
     if bus:
         h = Heading()
         h.calibrate()
@@ -128,7 +177,33 @@ try:
                 time.sleep(0.005)
             halt()
             h.wait(PAUSE_S)  # keeps integrating, so coasting after the stop is measured
-            print(f"step {k}/{steps}: target {target:5.0f}, measured {h.deg:6.1f} deg")
+
+            dist = read_dist_m()
+            flagged_step, min_dist = _check_dist(k, dist, baseline_dist, flagged_step, min_dist)
+            dist_str = f"{dist:.3f} m" if dist is not None else "n/a"
+            flag_str = "  *** OBJECT ***" if flagged_step == k else ""
+            print(f"step {k}/{steps}: target {target:5.0f}, measured {h.deg:6.1f} deg  dist={dist_str}{flag_str}")
+
+        scan_deg = h.deg  # snapshot before the return turn
+
+        if flagged_step is not None:
+            return_deg = flagged_step * STEP_DEG
+            print(f"\nObject at step {flagged_step} ({return_deg:.0f}° from start, dist={min_dist:.3f} m).")
+            print(f"Turning {flagged_step} step(s) × {STEP_DEG:.0f}° = {return_deg:.0f}° to face it...")
+            return_target = h.deg + return_deg
+            start_turn()
+            t0 = time.perf_counter()
+            while h.update() < return_target - STOP_EARLY_DEG:
+                if time.perf_counter() - t0 > STEP_TIMEOUT_S * flagged_step:
+                    halt()
+                    raise RuntimeError("return turn timed out")
+                time.sleep(0.005)
+            halt()
+            print(f"Stopped. Facing step {flagged_step} direction.")
+        else:
+            print("No object detected during scan.")
+
+        print(f"Done. Scan: {scan_deg:.1f} deg (error {scan_deg - TOTAL_DEG:+.1f})")
     else:
         step_time = STEP_DEG / TIMED_DEG_PER_S
         for k in range(1, steps + 1):
@@ -136,8 +211,26 @@ try:
             time.sleep(step_time)
             halt()
             time.sleep(PAUSE_S)
-            print(f"step {k}/{steps}: timed {STEP_DEG:.0f} deg")
-    print(f"Done. Total measured turn: {h.deg:.1f} deg (error {h.deg - TOTAL_DEG:+.1f})" if bus else "Done (timed, unmeasured).")
+
+            dist = read_dist_m()
+            flagged_step, min_dist = _check_dist(k, dist, baseline_dist, flagged_step, min_dist)
+            dist_str = f"{dist:.3f} m" if dist is not None else "n/a"
+            flag_str = "  *** OBJECT ***" if flagged_step == k else ""
+            print(f"step {k}/{steps}: timed {STEP_DEG:.0f} deg  dist={dist_str}{flag_str}")
+
+        if flagged_step is not None:
+            return_deg = flagged_step * STEP_DEG
+            print(f"\nObject at step {flagged_step} ({return_deg:.0f}° from start, dist={min_dist:.3f} m).")
+            print(f"Turning {flagged_step} step(s) × {STEP_DEG:.0f}° = {return_deg:.0f}° to face it...")
+            start_turn()
+            time.sleep(step_time * flagged_step)
+            halt()
+            print(f"Stopped. Facing step {flagged_step} direction.")
+        else:
+            print("No object detected during scan.")
+
+        print("Done (timed, unmeasured).")
+
 except KeyboardInterrupt:
     print("\nStopped.")
 except RuntimeError as e:
@@ -148,3 +241,5 @@ finally:
     right.close()
     if bus:
         bus.close()
+    if sonar:
+        sonar.close()
