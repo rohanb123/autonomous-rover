@@ -12,7 +12,6 @@ Wiring (see the rover wiring diagrams):
 Keep the rover still for the first 2 s (gyro calibration). Ctrl+C stops the motors.
 """
 
-import os
 import time
 
 from gpiozero import Motor
@@ -48,39 +47,6 @@ try:
 except Exception as e:
     bus = None
     print(f"IMU not available ({e}); using timed turns instead.")
-
-os.makedirs("img", exist_ok=True)
-
-# cam is initialised after gyro calibration so the pipeline never sits idle long
-# enough to hit libcamera's 1-second dequeue timer before the first capture.
-cam = None
-
-
-def start_camera():
-    global cam
-    try:
-        from picamera2 import Picamera2
-        cam = Picamera2()
-        cam.configure(cam.create_video_configuration(main={"size": (640, 480), "format": "RGB888"}))
-        cam.start()
-        cam.capture_array()  # request a frame immediately; PiSP kills the pipeline after 1 s idle
-        time.sleep(0.5)
-        print("Camera ready.")
-    except Exception as e:
-        cam = None
-        print(f"Camera not available ({e}); skipping captures.")
-
-
-def capture(step_num):
-    """Save a JPEG for this step. No-op if the camera did not initialise."""
-    if cam is None:
-        return
-    filename = f"img/frame_{step_num:02d}.jpg"
-    try:
-        cam.capture_file(filename)
-        print(f"  -> saved {filename}")
-    except Exception as e:
-        print(f"  -> capture failed: {e}")
 
 
 def gz_dps():
@@ -149,7 +115,6 @@ try:
     if bus:
         h = Heading()
         h.calibrate()
-        start_camera()
         for k in range(1, steps + 1):
             target = k * STEP_DEG  # cumulative target, so small errors don't add up
             start_turn()
@@ -163,17 +128,14 @@ try:
                 time.sleep(0.005)
             halt()
             h.wait(PAUSE_S)  # keeps integrating, so coasting after the stop is measured
-            capture(k)
             print(f"step {k}/{steps}: target {target:5.0f}, measured {h.deg:6.1f} deg")
     else:
-        start_camera()
         step_time = STEP_DEG / TIMED_DEG_PER_S
         for k in range(1, steps + 1):
             start_turn()
             time.sleep(step_time)
             halt()
             time.sleep(PAUSE_S)
-            capture(k)
             print(f"step {k}/{steps}: timed {STEP_DEG:.0f} deg")
     print(f"Done. Total measured turn: {h.deg:.1f} deg (error {h.deg - TOTAL_DEG:+.1f})" if bus else "Done (timed, unmeasured).")
 except KeyboardInterrupt:
@@ -186,6 +148,3 @@ finally:
     right.close()
     if bus:
         bus.close()
-    if cam:
-        cam.stop()
-        cam.close()
