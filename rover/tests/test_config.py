@@ -29,7 +29,7 @@ from rover.config import (  # noqa: E402
     parse_calib,
 )
 
-# The as-built harness, BCM numbering: an L293D, and the two scoop servos straight off the
+# The as-built harness, BCM numbering: an L293D, and the HC-SR04. The scoop was scrapped in
 # Pi. docs/01 section 4 still describes the TB6612 + PCA9685 stack it replaced, and a request
 # is open to P1 (docs/requests/2026-10-24-P2-to-P1-harness-imu-and-pinout.md). Once that
 # lands, doc 01 wins over this table again -- until then this *is* the record, and comparing
@@ -42,12 +42,10 @@ DOC01_PINS = {
     "in3": 20,
     "in4": 21,
     "led": 22,
-    "servo_shoulder": 18,
-    "servo_wrist": 19,
+    "sonar_trig": 23,
+    "sonar_echo": 24,
 }
-# The PCA9685 is no longer in the stack but its address stays for the --servos pca9685
-# fallback; the ADS1115 is still the optional shoulder pot (docs/05 U-4).
-DOC01_I2C = {"pca9685_addr": 0x40, "ads1115_addr": 0x48}
+DOC01_I2C = {"ads1115_addr": 0x48}
 
 
 @pytest.fixture
@@ -70,7 +68,6 @@ def test_pins_match_the_as_built_harness(calib: Calib):
     assert actual == DOC01_PINS, "calib.yaml pins drifted from the as-built harness"
     # The L293D has no standby pin; its enables are the hardware-off (see motors.stop()).
     assert not hasattr(calib.pins, "stby")
-    assert calib.i2c.pca9685_addr == DOC01_I2C["pca9685_addr"]
     assert calib.i2c.ads1115_addr == DOC01_I2C["ads1115_addr"]
     # docs/05 U-2: MPU-6050 first, accel-only ADXL345 as the fallback.
     assert calib.i2c.imu_addrs == (0x68, 0x53)
@@ -91,18 +88,6 @@ def test_every_role_doc_section_4_field_is_present_and_typed(calib: Calib):
     assert len(calib.homography) == 3 and all(len(row) == 3 for row in calib.homography)
     assert calib.bev_res_m_px == 0.005  # docs/00 section 4
     assert calib.bev_size_px == 360
-    assert set(calib.scoop_us) == {"STOW", "DEPLOY", "CURL", "PRESENT", "DUMP"}
-    assert all(len(v) == 2 for v in calib.scoop_us.values())
-    assert len(calib.scoop_zone_px) == 4 and len(calib.present_roi_px) == 4
-
-
-def test_scoop_us_matches_the_mock_so_both_tell_the_same_story():
-    """fake_rover and the real rover must not disagree about a named scoop pose."""
-    sys.path.insert(0, str(ROOT / "mocks"))
-    import fake_rover
-
-    shipped = load_calib(CALIB_YAML).scoop_us
-    assert {k: list(v) for k, v in shipped.items()} == fake_rover.SCOOP_US
 
 
 def test_safety_and_bev_constants_mirror_doc00(calib: Calib):
@@ -158,9 +143,7 @@ def test_invalid_yaml_raises_calib_error(tmp_path: Path):
         load_calib(path)
 
 
-@pytest.mark.parametrize(
-    "section", ["pins", "i2c", "motion", "bev", "camera", "servos", "scoop", "safety", "pose"]
-)
+@pytest.mark.parametrize("section", ["pins", "i2c", "motion", "bev", "camera", "safety", "pose"])
 def test_a_missing_section_names_itself(section: str):
     raw = {k: v for k, v in helpers.CALIB_DICT.items() if k != section}
     with pytest.raises(CalibError, match=section):
@@ -179,8 +162,6 @@ def test_a_missing_key_names_itself():
     [
         ({"bev": {"homography": [[1, 0, 0], [0, 1, 0]]}}, "homography"),
         ({"motion": {"m_per_s_at": {}}}, "m_per_s_at"),
-        ({"servos": {"limits_us": [600]}}, "limits_us"),
-        ({"scoop": {"scoop_zone_px": [1, 2, 3]}}, "scoop_zone_px"),
         ({"i2c": {"imu_addrs": []}}, "imu_addrs"),
     ],
 )

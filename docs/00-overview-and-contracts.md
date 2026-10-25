@@ -3,7 +3,7 @@
 > If code disagrees with this file, the code is wrong. Change process: [AGENTS.md §3](../AGENTS.md#3-changing-a-contract).
 
 ## 0. Version
-`CONTRACT_VERSION = 1.5.0` (2026-10-24: removed the Mars delay mode in 1.1.0; mission parsing via Grok in 1.2.0; keyframe headings are absolute + mapper `/health` in 1.3.0; run-scoped DB keys in 1.4.0; shortest route ending at home in 1.5.0)
+`CONTRACT_VERSION = 2.0.0` (2026-10-25: removed the Mars delay mode in 1.1.0; mission parsing via Grok in 1.2.0; keyframe headings are absolute + mapper `/health` in 1.3.0; run-scoped DB keys in 1.4.0; shortest route ending at home in 1.5.0; **2.0.0 scraps the scoop**: ops `scoop`/`dump`/`scoop_pose` and `Telemetry.scoop` are gone, replaced by one `sample` op that photographs the target close up, and `Telemetry` gains `range_m` from an HC-SR04. Breaking: a rover older than 2.0.0 refuses `sample`, and a brain older than 2.0.0 sends ops that no longer exist)
 
 ## 1. System in one page
 
@@ -14,11 +14,14 @@
 3. **Score.** The brain sends proposal crops to vision `/score` and gets component scores. It computes the final score, dedupes, drops anything inside the visited exclusion radius, and pushes the rest into a min-heap. The heap is capped at k, so the root is the weakest of the current top-k.
 4. **Plan.** The brain pops the top-k and orders it with a nearest-neighbor route from the current pose.
 5. **Investigate** each target, in order:
-   1. `approach`: visual servo into the scoop zone.
-   2. `scoop`: deploy, push, curl, then present to the camera.
-   3. Analyze: upload the image; vision `/analyze` returns a placeholder label/caption and a **simulated Bradford assay**.
-   4. `dump`.
-   5. `mark_visited` with its exclusion radius.
+   1. `approach`: visual servo until the target is centred and in close-up range.
+   2. `sample`: photograph it close up (autofocus to ~0.15 m) and upload the image.
+   3. Analyze: vision `/analyze` returns a placeholder label/caption and a **simulated Bradford assay**.
+   4. `mark_visited` with its exclusion radius.
+
+   There is no scoop and nothing is physically collected (contract 2.0.0): a "sample" is a
+   close-up photograph. The assay was always `simulated: true` and keyed off an image URL,
+   so removing the mechanism costs it nothing.
 6. **Return** home, then `end_run`. The mapper runs global fusion and writes global tiles. The dashboard switches the run to replay.
 
 Every state change is written to SpacetimeDB. The dashboard reads **only** SpacetimeDB (via subscriptions) plus static images from the mapper, and sends **commands only to the brain**.
@@ -66,7 +69,6 @@ ares-scout/
 ├── hardware/                      P1
 │   ├── bom.csv                    mirror of docs/01 BOM
 │   ├── wiring/harness.md          as-built wiring photos + deviations
-│   ├── scoop/                     templates (scoop_template.pdf/svg), photos, measured angles sheet
 │   ├── arena/                     arena layout, marker placement
 │   └── checklists/preflight.md    pre-run checklist
 ├── rover/                         P2  (runs on Pi); bev.py and proposals.py: P3
@@ -78,7 +80,6 @@ ares-scout/
 │   │   ├── snapshot_server.py     HTTP :8080 /snapshot.jpg, /stream.mjpg (debug)
 │   │   ├── motors.py              TB6612 via gpiozero (lgpio)
 │   │   ├── servos.py              PCA9685 channels, µs limits
-│   │   ├── scoop.py               named poses + scoop sequence
 │   │   ├── imu.py                 accel(/gyro) driver, auto-detect 0x68/0x53
 │   │   ├── camera.py              OpenCV capture, fixed exposure
 │   │   ├── motion.py              timed drive/turn primitives, gyro-closed turn if available
@@ -87,11 +88,11 @@ ares-scout/
 │   │   ├── station.py             spin-capture routine
 │   │   ├── bev.py                 homography → ground tile                  P3 (from P2, 2026-10-24)
 │   │   ├── proposals.py           "rockster-lite" rock proposals (classic CV)  P3 (from P2, 2026-10-24)
-│   │   ├── approach.py            visual servo into scoop zone
+│   │   ├── approach.py            visual servo into close-up range
 │   │   ├── local_store.py         SD-card station bundles + SQLite index
 │   │   ├── uploader.py            POST to mapper with retry queue
 │   │   └── safety.py              heartbeat watchdog, estop latch, tilt cutoff
-│   ├── calib/                     calibrate_motion.py, calibrate_camera.py, calibrate_scoop.py, calib.yaml
+│   ├── calib/                     calibrate_motion.py, calibrate_camera.py, calib_edit.py, calib.yaml
 │   └── tests/
 ├── gx10/                          no shared files: each service dir has its own requirements.txt (same owner)
 │   ├── brain/                     P4 (including voice/)
@@ -120,7 +121,6 @@ ares-scout/
 │   │   ├── novelty.py             per-run embedding memory
 │   │   ├── pickable.py            size/shape → pickable score
 │   │   ├── analyze.py             placeholder analysis (VLM caption + label)
-│   │   ├── scoop_check.py         empty-scoop detector (ROI diff)
 │   │   └── bradford_sim.py        SIMULATED Bradford assay (deterministic)
 │   ├── mapper/                    P3
 │   │   ├── requirements.txt
@@ -210,7 +210,7 @@ CORS: brain, mapper and vision allow origin `http://192.168.50.30:5173` and `htt
 - **Units**: m, deg, s. `t` = unix seconds (float, `time.time()`). DB server timestamps come from `ctx.timestamp`, but every row also carries the producer's `t_unix` (f64).
 - **Clock sync**: Pi and GX10 run `chrony` against the GX10 (GX10 = NTP server on the LAN). Tolerance 50 ms. ⚠️ UNVERIFIED that DGX OS ships chrony; `timedatectl` fallback.
 - **Rates**: rover telemetry 5 Hz → brain; brain writes `pose` at 2 Hz and `rover_status` (upsert) at 2 Hz; dashboard renders at screen rate from cache.
-- **Timeouts**: cmd ack ≤ 0.5 s; heartbeat from brain every 0.25 s; Pi stops motors if no heartbeat for 1.0 s **while moving**; `station` done ≤ 60 s; `approach` ≤ 45 s; `scoop` ≤ 30 s.
+- **Timeouts**: cmd ack ≤ 0.5 s; heartbeat from brain every 0.25 s; Pi stops motors if no heartbeat for 1.0 s **while moving**; `station` done ≤ 60 s; `approach` ≤ 45 s; `sample` ≤ 30 s.
 
 ## 5. IDs
 See [AGENTS.md §4](../AGENTS.md#4-conventions). The brain mints `r_ m_ t_ c_ v_ a_`; the Pi mints `s_ k_ p_` (they're scoped by `run_id`, which the brain sends in `start_run` cmd).
@@ -255,25 +255,23 @@ All messages are JSON with the envelope `{"type": str, "t": float, "src": "brain
 | `set_pose` | `{x,y,heading_deg,source}` | `{pose}` |
 | `station` | `{station_id, n_views:8, step_deg:45}` | `StationResult` (6.4) |
 | `approach` | `{cand_id, x, y}` (mission frame) | `{in_zone:bool, pose, offset_px:[dx,dy]}` |
-| `scoop` | `{sample_id}` | `{present_image:"…/a_0001.jpg", uploaded:bool, pose}` |
-| `dump` | `{}` | `{ok:true}` |
-| `scoop_pose` | `{pose:"STOW"\|"DEPLOY"\|"CURL"\|"PRESENT"\|"DUMP"}` | `{ok:true}` |
+| `sample` | `{sample_id}` | `{image_url:"…/a_0001.jpg", uploaded:bool, pose}` |
 | `snapshot` | `{}` | `{url}` |
 | `heartbeat` | `{}` | (no ack) |
 
 **Replies** (rover → brain): `{"type":"ack","cmd_id":…}`, `{"type":"done","cmd_id":…,"result":{…}}`, `{"type":"err","cmd_id":…,"code":"E_…","msg":"…"}`.
 
-Error codes: `E_ESTOP`, `E_BUSY`, `E_TIMEOUT`, `E_BAD_ARGS`, `E_TILT`, `E_CAMERA`, `E_LOST_TARGET`, `E_UPLOAD`, `E_SCOOP`, `E_INTERNAL`.
+Error codes: `E_ESTOP`, `E_BUSY`, `E_TIMEOUT`, `E_BAD_ARGS`, `E_TILT`, `E_CAMERA`, `E_LOST_TARGET`, `E_UPLOAD`, `E_INTERNAL`. (`E_SCOOP` was removed in 2.0.0.)
 
 **Telemetry** (rover → brain, 5 Hz):
 ```json
 {"type":"telemetry","t":1761300000.4,"src":"rover",
  "run_id":"r_20261024_101500",
  "pose":{"x":0.42,"y":-0.10,"heading_deg":31.5,"source":"dr+gyro","sigma_xy_m":0.05},
- "state":"IDLE|MOVING|STATION|APPROACH|SCOOPING|ESTOP",
+ "state":"IDLE|MOVING|STATION|APPROACH|SAMPLING|ESTOP",
  "estop":false,
  "imu":{"ax":0.01,"ay":-0.02,"az":9.79,"gz_dps":0.4},
- "scoop":{"pose":"STOW","us":[1500,1500]},
+ "range_m":0.42,
  "cpu_temp_c":55.2,
  "queue_len":0,
  "uplink_backlog":0}
@@ -299,7 +297,8 @@ Parts: `station.json`, `kf_000.jpg … kf_007.jpg`, `bev.png`, `crop_p_XXXX.jpg`
 The Pi includes the mapper reply in its `station` `done.result` (`StationResult = station.json + {"mapper": reply}`).
 
 ### 6.5 Sample upload (Pi → mapper `POST /ingest/sample`, multipart)
-Parts: `sample.json` `{run_id, sample_id, cand_id, t, pose}` + `present.jpg`. Reply `{ok, url}`.
+Parts: `sample.json` `{run_id, sample_id, cand_id, t, pose}` + `closeup.jpg`. Reply `{ok, url}`.
+A "sample" is a close-up photograph of the target, not a collected specimen (2.0.0).
 
 **Mapper health:** `GET /health` → `{"ok": true, "stdb": bool}` (`stdb` = the mapper's last reducer write succeeded). The brain polls it for `HealthResp.mapper`, like vision's `/health`.
 
@@ -320,7 +319,7 @@ Response:
 Request `{"run_id", "sample_id", "cand_id", "image_url", "interest_score": 0.0–1.0}`
 Response `AnalysisResult`:
 ```json
-{"sample_id":"a_0001","scoop_has_item":true,"label":"float_rock","confidence":0.62,
+{"sample_id":"a_0001","label":"float_rock","confidence":0.62,
  "caption":"A small angular dark rock fragment with a smooth face.",
  "simulated":true,
  "assay": {
@@ -356,7 +355,7 @@ Assay math and verdict bands: [P3 §Bradford](roles/P3-perception-ai.md#bradford
 `{"task_id":"t_0003","run_id","mission_id","kind":"station|visit|return","ref":"s_0002|c_0007|home","seq":3,"status":"pending|active|done|failed|skipped","note"?}`
 
 ### 6.10 Visit (sampled location)
-`{"visit_id":"v_0002","run_id","cand_id","x","y","radius_m":0.20,"t","outcome":"sampled|empty_scoop|unreachable|skipped"}`
+`{"visit_id":"v_0002","run_id","cand_id","x","y","radius_m":0.20,"t","outcome":"sampled|unreachable|skipped"}` (`empty_scoop` removed in 2.0.0)
 
 ### 6.11 Dashboard → brain REST (`http://192.168.50.10:8000`)
 | Method/path | Body | Effect |
@@ -389,7 +388,7 @@ stateDiagram-v2
   PLAN --> AWAIT_APPROVAL: mode=suggest
   AWAIT_APPROVAL --> INVESTIGATE: approve
   PLAN --> INVESTIGATE: mode=act
-  INVESTIGATE --> INVESTIGATE: next target (approach→scoop→analyze→dump→mark_visited)
+  INVESTIGATE --> INVESTIGATE: next target (approach→sample→analyze→mark_visited)
   INVESTIGATE --> RETURN: queue empty / come_back / time up
   RETURN --> DONE: home reached → end_run → fuse
   SURVEY --> PAUSED: pause

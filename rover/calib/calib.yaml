@@ -9,7 +9,7 @@
 # written into doc 01 fails the build.
 # Timing mirrors docs/00-overview-and-contracts.md section 4. Doc 00 wins.
 
-contract_version: "1.5.0"   # docs/00 section 0. A bump should fail loudly here, not drift
+contract_version: "2.0.0"   # docs/00 section 0. A bump should fail loudly here, not drift
                             # silently -- which is the point of mirroring it at all.
                             # 1.4.0 run-scoped DB keys: spacetimedb/ and docs/02 only.
                             # 1.5.0 shortest route ending at home: docs/00 section 8 and
@@ -30,14 +30,15 @@ pins:                       # BCM numbering. Motor driver is an L293D, not a TB6
   in4: 21                   # L293D pin 15 -- right direction
   led: 22                   # LED via 330 ohm
   pwm_hz: 1000              # UNVERIFIED: L293D PWM frequency. Pi 5 -> lgpio software PWM.
-  servo_shoulder: 18        # straight off the Pi now, no PCA9685. Hardware-PWM capable pin,
-  servo_wrist: 19           # so a dtoverlay can kill software-PWM jitter without rewiring.
+  sonar_trig: 23            # HC-SR04 TRIG (contract 2.0.0). GPIO 18/19 are free again now
+  sonar_echo: 24            # the scoop servos are gone, as is GPIO 26 (the TB6612's STBY).
+                            # ECHO is a 5 V output into a 3.3 V-max pin: it MUST go through a
+                            # 1k/2k divider (5 * 2/3 = 3.33 V) or it damages the GPIO.
   # L293D pin 16 (logic Vss) needs 4.5-7 V: wire it to the Pi's 5 V pin, NOT 3V3. The
   # TB6612 was happy at 3.3 V; the L293D will half-work and look like a software bug.
 
 i2c:
   bus: 1
-  pca9685_addr: 0x40        # docs/01 section 4
   imu_addrs: [0x68, 0x53]   # MPU-6050 first, then accel-only ADXL345 (docs/05 U-2)
   ads1115_addr: 0x48        # optional shoulder pot; unused at I1 (docs/05 U-4)
 
@@ -98,24 +99,7 @@ camera:
   lores_width: 320          # second CSI stream for :8080 /stream.mjpg (debug only).
                             # Height follows main's aspect; see rover/rover/camera.py.
 
-servos:
-  freq_hz: 50
-  shoulder_ch: 0            # docs/01 section 4: ch0 shoulder, ch1 wrist
-  wrist_ch: 1
-  limits_us: [600, 2400]    # UNVERIFIED U-5: hard clamp. Narrow it once P1 reports the real stops.
-  ramp_s: 0.4               # P2 role doc section 4, Scoop.goto default
-  scoop_us:                 # UNVERIFIED: [shoulder_us, wrist_us] per pose (docs/01 section 6.2).
-    STOW:    [1500, 1500]   # Deliberately identical to mocks/fake_rover.py SCOOP_US, so the mock
-    DEPLOY:  [1900, 1200]   # and the real rover tell the same story until calibrate_scoop.py runs.
-    CURL:    [1700, 1800]
-    PRESENT: [1300, 1750]
-    DUMP:    [1850, 1100]
 
-scoop:
-  scoop_zone_px: [240, 330, 160, 120]   # UNVERIFIED [x,y,w,h] at 640x480: where the DEPLOY lip lands
-  present_roi_px: [160, 90, 320, 240]   # UNVERIFIED [x,y,w,h]: the pebble's box in PRESENT (U-7)
-  push_m: 0.04              # P2 role doc section 4 sequence_pick, docs/01 section 6.3
-  push_speed: 0.2
 
 safety:
   tilt_limit_deg: 35.0      # P2 role doc section 4, tilt_ok

@@ -2,7 +2,7 @@
 
 Loaded once, read-only. The nine fields P2's role doc section 4 names stay flat on `Calib`
 (`motor_trim`, `m_per_s_at`, `deg_per_s_at`, `homography`, `bev_res_m_px`, `bev_size_px`,
-`scoop_us`, `scoop_zone_px`, `present_roi_px`); everything else hangs off a nested frozen
+`homography`); everything else hangs off a nested frozen
 group. The YAML is nested for readability, so this module is where the two shapes meet.
 
 `pins` is a copy of docs/01-hardware-and-assembly.md section 4 and `rover/tests/test_config.py`
@@ -34,7 +34,7 @@ class CalibError(ValueError):
 
 @dataclass(frozen=True)
 class Pins:
-    """BCM pin numbers for the L293D and the two scoop servos.
+    """BCM pin numbers for the L293D, the status LED and the HC-SR04.
 
     The L293D has no STBY: its enable pins are the equivalent, and EN low puts the outputs
     in high-impedance so the motors coast. That is the safety-off state.
@@ -48,15 +48,15 @@ class Pins:
     in4: int  # L293D pin 15 -- right direction
     led: int
     pwm_hz: int
-    # Servos hang straight off the Pi now, not a PCA9685. Defaulted so an older calib loads.
-    servo_shoulder: int = 18
-    servo_wrist: int = 19
+    # HC-SR04 (contract 2.0.0). Defaulted so a calib.yaml without them still loads;
+    # ECHO needs a 1k/2k divider, it is a 5 V output into a 3.3 V-max pin.
+    sonar_trig: int = 23
+    sonar_echo: int = 24
 
 
 @dataclass(frozen=True)
 class I2c:
     bus: int
-    pca9685_addr: int
     imu_addrs: tuple[int, ...]
     ads1115_addr: int
 
@@ -87,23 +87,8 @@ class CameraCfg:
     exposure_us: int = 8000  # libcamera ExposureTime is microseconds, not driver units
     analogue_gain: float = 2.0  # with AeEnable off, gain has to be set explicitly
     focus_m: float = 0.8  # survey: ground 0.3-1.5 m out
-    present_focus_m: float = 0.15  # the pebble in the scoop (docs/05 U-7)
+    present_focus_m: float = 0.15  # the close-up `sample` photo (docs/05 U-7)
     lores_width: int = 320  # second CSI stream, for :8080. Height follows main's aspect
-
-
-@dataclass(frozen=True)
-class ServosCfg:
-    freq_hz: int
-    shoulder_ch: int
-    wrist_ch: int
-    limits_us: tuple[int, int]
-    ramp_s: float
-
-
-@dataclass(frozen=True)
-class ScoopCfg:
-    push_m: float
-    push_speed: float
 
 
 @dataclass(frozen=True)
@@ -132,16 +117,11 @@ class Calib:
     homography: tuple[tuple[float, float, float], ...]
     bev_res_m_px: float
     bev_size_px: int
-    scoop_us: Mapping[str, tuple[int, int]]
-    scoop_zone_px: tuple[int, int, int, int]
-    present_roi_px: tuple[int, int, int, int]
     # the rest
     pins: Pins
     i2c: I2c
     motion: MotionCfg
     camera: CameraCfg
-    servos: ServosCfg
-    scoop: ScoopCfg
     safety: SafetyCfg
     pose: PoseCfg
     contract_version: str
@@ -204,8 +184,7 @@ def parse_calib(raw: dict[str, Any], source: Path | None = None) -> Calib:
     """Build a `Calib` from already-parsed YAML. Separate from IO so tests can feed dicts."""
     if not isinstance(raw, dict):
         raise CalibError("calib.yaml: top level must be a mapping")
-    motion, bev = _group(raw, "motion"), _group(raw, "bev")
-    servos, scoop, i2c = _group(raw, "servos"), _group(raw, "scoop"), _group(raw, "i2c")
+    motion, bev, i2c = _group(raw, "motion"), _group(raw, "bev"), _group(raw, "i2c")
 
     homography = bev.get("homography")
     if not isinstance(homography, list) or len(homography) != 3:
@@ -214,17 +193,9 @@ def parse_calib(raw: dict[str, Any], source: Path | None = None) -> Calib:
         if not isinstance(row, list) or len(row) != 3:
             raise CalibError("calib.yaml: bev.homography must be a 3x3 list of lists")
 
-    scoop_us = servos.get("scoop_us")
-    if not isinstance(scoop_us, dict) or not scoop_us:
-        raise CalibError("calib.yaml: servos.scoop_us must be a non-empty mapping")
-
     imu_addrs = i2c.get("imu_addrs")
     if not isinstance(imu_addrs, list) or not imu_addrs:
         raise CalibError("calib.yaml: i2c.imu_addrs must be a non-empty list")
-
-    limits = servos.get("limits_us")
-    if not isinstance(limits, list) or len(limits) != 2:
-        raise CalibError("calib.yaml: servos.limits_us must be [min_us, max_us]")
 
     version = raw.get("contract_version")
     if not isinstance(version, str):
@@ -237,17 +208,10 @@ def parse_calib(raw: dict[str, Any], source: Path | None = None) -> Calib:
         homography=tuple(tuple(float(v) for v in row) for row in homography),  # type: ignore[arg-type]
         bev_res_m_px=float(bev["bev_res_m_px"]),
         bev_size_px=int(bev["bev_size_px"]),
-        scoop_us=MappingProxyType(
-            {str(k): (int(v[0]), int(v[1])) for k, v in scoop_us.items()},
-        ),
-        scoop_zone_px=_quad(scoop, "scoop_zone_px", "scoop"),
-        present_roi_px=_quad(scoop, "present_roi_px", "scoop"),
         pins=_build(Pins, _group(raw, "pins"), "pins"),
         i2c=_build(I2c, i2c, "i2c", imu_addrs=tuple(int(a) for a in imu_addrs)),
         motion=_build(MotionCfg, motion, "motion"),
         camera=_build(CameraCfg, _group(raw, "camera"), "camera"),
-        servos=_build(ServosCfg, servos, "servos", limits_us=(int(limits[0]), int(limits[1]))),
-        scoop=_build(ScoopCfg, scoop, "scoop"),
         safety=_build(SafetyCfg, _group(raw, "safety"), "safety"),
         pose=_build(PoseCfg, _group(raw, "pose"), "pose"),
         contract_version=version,

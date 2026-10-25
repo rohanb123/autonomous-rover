@@ -5,7 +5,7 @@ Contract: docs/00 §6.6 (/score) and §6.7 (/analyze); models from marsrover_sha
 
 - /score returns seeded random *components* per (run_id, prop_id); the brain computes the score.
 - /analyze calls the real SIMULATED Bradford simulator, so the assay is real from I0.
-  `scoop_has_item` is seeded per sample (about 1 in 7 is empty) so the brain's retry path runs.
+  `has_item` is seeded per sample (about 1 in 7 misses) so the brain's retry path runs.
 - Nothing here fetches images or writes to SpacetimeDB (the brain writes analysis_record).
 
 Run:  python mocks/fake_vision.py [--host 0.0.0.0] [--port 8100] [--empty-rate 0.15]
@@ -93,10 +93,9 @@ def fake_analysis(req: AnalyzeReq, empty_rate: float) -> AnalysisResult:
     label = rng.choice(CATEGORIES)
     return AnalysisResult(
         sample_id=req.sample_id,
-        scoop_has_item=has_item,
         label=label if has_item else "empty",
         confidence=round(rng.uniform(0.4, 0.9), 2) if has_item else 0.0,
-        caption=CAPTIONS[label] if has_item else "The scoop appears empty.",
+        caption=CAPTIONS[label] if has_item else "The target is not in frame.",
         simulated=True,
         assay=simulate(req.sample_id, req.run_id, req.interest_score) if has_item else None,
     )
@@ -126,7 +125,7 @@ def create_app(empty_rate: float = 0.15, log_events: bool = True) -> FastAPI:
                 "vision",
                 "info",
                 "analysis",
-                f"fake analyze {req.sample_id}: item={res.scoop_has_item} verdict={verdict}",
+                f"fake analyze {req.sample_id}: {res.label} verdict={verdict}",
                 {"sample_id": req.sample_id, "cand_id": req.cand_id, "mock": True},
             )
         return res
@@ -138,7 +137,7 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--host", default="0.0.0.0")
     ap.add_argument("--port", type=int, default=8100)
-    ap.add_argument("--empty-rate", type=float, default=0.15, help="share of empty scoops")
+    ap.add_argument("--empty-rate", type=float, default=0.15, help="share of missed targets")
     args = ap.parse_args()
     import uvicorn
 

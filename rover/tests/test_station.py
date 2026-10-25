@@ -125,16 +125,6 @@ class FakeUploader:
         )
 
 
-class FakeServos:
-    present = True
-
-    def __init__(self) -> None:
-        self.writes: list[tuple[int, int]] = []
-
-    def write_us(self, ch: int, us: int) -> None:
-        self.writes.append((ch, us))
-
-
 def build(
     *,
     calib_src: dict | None = None,
@@ -142,7 +132,6 @@ def build(
     safety: FakeSafety | None = None,
     store: FakeStore | None = None,
     uploader: FakeUploader | None = None,
-    servos: Any = None,
     allow_uncalibrated: bool = False,
     run_id: str = "r_20261024_101500",
 ) -> tuple[Station, FakeStore, FakeMotion, list[tuple[str, dict]]]:
@@ -161,7 +150,6 @@ def build(
         safety or FakeSafety(),
         store=st,
         uploader=uploader,
-        servos=servos,
         ids=IdGen(),
         emit=lambda kind, detail: events.append((kind, detail)),
         clock=clock,
@@ -416,29 +404,7 @@ def test_a_latched_safety_refuses_before_the_first_photo():
     assert motion.turns == [], "the rover must not move while latched"
 
 
-# --- the scoop and the camera -------------------------------------------------------------
-
-
-def test_the_scoop_is_stowed_before_the_first_photo():
-    """Otherwise it is in all eight of them (role doc section 5 step 1)."""
-    servos = FakeServos()
-    station, _, _, _ = build(servos=servos, uploader=FakeUploader())
-    station.run_station("s_0001", 2, 180.0)
-    stow = station.calib.scoop_us["STOW"]
-    assert servos.writes[:2] == [
-        (station.calib.servos.shoulder_ch, stow[0]),
-        (station.calib.servos.wrist_ch, stow[1]),
-    ]
-
-
-def test_a_missing_scoop_does_not_cost_the_survey():
-    class Broken(FakeServos):
-        def write_us(self, ch: int, us: int) -> None:
-            raise RuntimeError("no servo on that channel")
-
-    station, store, _, _ = build(servos=Broken(), uploader=FakeUploader())
-    station.run_station("s_0001", 2, 180.0)
-    assert len(store.saved[0][0].keyframes) == 2
+# --- the camera ---------------------------------------------------------------------------
 
 
 def test_the_exposure_lock_is_reported_not_assumed():

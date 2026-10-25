@@ -40,7 +40,6 @@ from marsrover_shared.schemas import (  # noqa: E402
     Imu,
     Pose,
     RoverState,
-    ScoopState,
     Telemetry,
     parse_rover_message,
 )
@@ -78,7 +77,7 @@ class StubBackend:
             state=self._state,
             estop=self._estop,
             imu=Imu(ax=0.0, ay=0.0, az=9.79, gz_dps=0.0),
-            scoop=ScoopState(pose="STOW", us=[1500, 1500]),
+            range_m=0.42,
             cpu_temp_c=40.0,
             queue_len=0,
             uplink_backlog=0,
@@ -154,16 +153,10 @@ class StubBackend:
         return await self._offload("station", "STATION")
 
     async def approach(self, cand_id: str, x: float, y: float) -> dict[str, Any]:
-        return await self._offload("approach", "APPROACH")
+        raise OpError("E_LOST_TARGET", "stub refuses to approach")
 
-    async def scoop(self, sample_id: str) -> dict[str, Any]:
-        raise OpError("E_SCOOP", "stub refuses to scoop")
-
-    async def dump(self) -> dict[str, Any]:
-        return await self._offload("dump", "SCOOPING")
-
-    async def scoop_pose(self, pose: str) -> dict[str, Any]:
-        return {"ok": True}
+    async def sample(self, sample_id: str) -> dict[str, Any]:
+        return await self._offload("sample", "SAMPLING")
 
     # --- safety hooks ---
     def on_heartbeat(self) -> None:
@@ -265,10 +258,10 @@ def test_contract_constants_match_doc00():
     assert ws_server.ACK_BUDGET_S == 0.5
     assert ws_server.TELEMETRY_HZ == 5.0
     assert ws_server.HEARTBEAT_TIMEOUT_S == 1.0
-    assert ws_server.OP_TIMEOUT_S == {"station": 60.0, "approach": 45.0, "scoop": 30.0}
+    assert ws_server.OP_TIMEOUT_S == {"station": 60.0, "approach": 45.0, "sample": 30.0}
     assert ws_server.PATH == "/rover"
     assert ws_server.ESTOP_EXEMPT_OPS == {"heartbeat", "clear_estop", "set_pose", "snapshot"}
-    # SCOOPING is deliberately not a moving state: it is a servo sequence, not driving.
+    # SAMPLING is deliberately not a moving state: it is a camera capture, not driving.
     assert ws_server.MOVING_STATES == {"MOVING", "STATION", "APPROACH"}
 
 
@@ -411,10 +404,12 @@ def test_estop_latches_aborts_the_blocking_op_and_gates_the_rest():
             assert isinstance(by_id[driving], Err) and by_id[driving].code == "E_ESTOP"
             # Latched: everything but the exempt ops is refused.
             assert (await client.run("drive", dist_m=0.1, speed=0.5)).code == "E_ESTOP"
-            assert (await client.run("dump")).code == "E_ESTOP"
+            assert (await client.run("sample", sample_id="a_0001")).code == "E_ESTOP"
             assert isinstance(await client.run("snapshot"), Done)
             assert isinstance(await client.run("clear_estop"), Done)
-            assert isinstance(await client.run("scoop_pose", pose="STOW"), Done)
+            assert isinstance(
+                await client.run("set_pose", x=0.0, y=0.0, heading_deg=0.0, source="dr"), Done
+            )
 
     run(go())
 
@@ -437,8 +432,8 @@ def test_a_watchdog_cut_aborts_the_blocking_op_once():
 def test_an_op_error_from_the_backend_becomes_an_err_frame():
     async def go():
         async with served(StubBackend()) as (client, _):
-            final = await client.run("scoop", sample_id="a_0001")
-            assert isinstance(final, Err) and final.code == "E_SCOOP"
+            final = await client.run("approach", cand_id="c_0001", x=0.5, y=0.0)
+            assert isinstance(final, Err) and final.code == "E_LOST_TARGET"
             assert "refuses" in final.msg
 
     run(go())

@@ -3,7 +3,7 @@
     python rover/rover/main.py                       # :8765, probe every device
     python rover/rover/main.py --no-hw               # laptop: nothing attached
     python rover/rover/main.py --motors sim --camera sim   # laptop, but real timing loops
-    python -m rover.main --motors auto --servos auto       # on the Pi, after pip install -e rover
+    python -m rover.main --motors auto --imu auto          # on the Pi, after pip install -e rover
 
 Either form works: like mocks/fake_rover.py, this puts shared/py and rover/ on sys.path
 itself, so it runs from a bare checkout with nothing installed.
@@ -14,13 +14,13 @@ between a laptop and the Pi and changes hourly while P1 builds the harness. `aut
 logs a one-line inventory and degrades to `off` -- it never crashes and never silently
 simulates. `sim` has to be asked for.
 
-Env fallbacks, each overridden by its flag: ROVER_MOTORS, ROVER_SERVOS, ROVER_IMU,
+Env fallbacks, each overridden by its flag: ROVER_MOTORS, ROVER_SONAR, ROVER_IMU,
 ROVER_CAMERA, ROVER_CALIB.
 
 An op whose module is not built yet answers `E_INTERNAL` with a message naming what is
 missing. Not `E_LOST_TARGET` or `E_SCOOP`: P4's FSM maps those onto *physical* outcomes
-(gx10/brain/fsm.py:527 records "unreachable" and carries on; :500 records "empty_scoop" and
-retries), so using them would make the brain invent sample results for code that does not
+(gx10/brain/fsm.py records "unreachable" and carries on), so using them would make the
+brain invent sample results for code that does not
 exist. `E_INTERNAL` reaches `_guarded` (fsm.py:265), is logged at error level and stops the
 run, which is the honest outcome.
 """
@@ -50,13 +50,12 @@ from marsrover_shared.schemas import (  # noqa: E402
     Imu,
     Pose,
     RoverState,
-    ScoopPoseName,
-    ScoopState,
     Telemetry,
 )
 from rover import snapshot_server, ws_server  # noqa: E402
 from rover.camera import Camera, CameraError, NullSource, SyntheticSource  # noqa: E402
 from rover.config import Calib, CalibError, load_calib  # noqa: E402
+from rover.i2c import I2cUnavailable, Smbus2Bus  # noqa: E402
 from rover.imu import Imu as ImuDevice  # noqa: E402
 from rover.imu import ImuPoller  # noqa: E402
 from rover.local_store import LocalStore  # noqa: E402
@@ -71,15 +70,7 @@ from rover.motors import (  # noqa: E402
 )
 from rover.pose import PoseEstimator  # noqa: E402
 from rover.safety import Safety  # noqa: E402
-from rover.servos import (  # noqa: E402
-    GpioServos,
-    Pca9685Servos,
-    ServoDriver,
-    ServosUnavailable,
-    Smbus2Bus,
-    no_servos,
-    servo_pins,
-)
+from rover.sonar import Sonar, SonarPoller, SonarUnavailable  # noqa: E402
 from rover.station import Station, StationError  # noqa: E402
 from rover.uploader import DEFAULT_MAPPER, Uploader  # noqa: E402
 from rover.ws_server import EventBus, OpError  # noqa: E402
@@ -93,9 +84,7 @@ CPU_TEMP_CACHE_S = 1.0
 #: Ops whose module is not written yet, and what is missing. Answered with E_INTERNAL.
 UNBUILT: dict[str, str] = {
     "approach": "approach is not implemented yet (P2 I3); not E_LOST_TARGET, nothing was tracked",
-    "scoop": "scoop needs camera capture + /ingest/sample upload (P2 I3); nothing was attempted",
-    "scoop_pose": "scoop_pose needs rover/rover/scoop.py (P2 I1, not written yet)",
-    "dump": "dump needs rover/rover/scoop.py (P2 I1, not written yet)",
+    "sample": "sample needs a close-up capture + /ingest/sample upload (P2 I3)",
 }
 
 
@@ -123,27 +112,6 @@ def make_motors(mode: str, calib: Calib) -> Motors:
         return Motors(calib.pins, backend=NullPins(), **kwargs)
 
 
-def make_servos(mode: str, calib: Calib) -> ServoDriver:
-    """`auto` means GPIO: the two scoop servos hang straight off the Pi now.
-
-    `pca9685` is the escape hatch if software-PWM jitter spoils the scoop -- the driver is
-    still here and still tested, so switching is a flag rather than a rewrite.
-    """
-    cfg = calib.servos
-    if mode == "off":
-        return no_servos(cfg)
-    if mode == "pca9685":
-        bus = Smbus2Bus(calib.i2c.bus)
-        return Pca9685Servos(calib.i2c.pca9685_addr, cfg.freq_hz, bus, limits_us=cfg.limits_us)
-    try:
-        return GpioServos(servo_pins(calib.pins, cfg), cfg.freq_hz, limits_us=cfg.limits_us)
-    except ServosUnavailable as e:
-        if mode == "gpio":
-            raise
-        log.warning("servos: no GPIO (%s); continuing with none attached", e)
-        return no_servos(cfg)
-
-
 def make_imu(mode: str, calib: Calib) -> ImuDevice | None:
     """Probe the I2C bus for an MPU-6050, else an ADXL345, else nothing.
 
@@ -157,7 +125,7 @@ def make_imu(mode: str, calib: Calib) -> ImuDevice | None:
     wanted = {"mpu6050": (0x68,), "adxl345": (0x53,)}.get(mode, calib.i2c.imu_addrs)
     try:
         bus = Smbus2Bus(calib.i2c.bus)
-    except ServosUnavailable as e:  # same I2cBus, so the same "no bus" error
+    except I2cUnavailable as e:
         if mode != "auto":
             raise SystemExit(f"--imu {mode}: {e}") from e
         log.warning("imu: no I2C bus (%s); turns stay timed, tilt cutoff off", e)
@@ -169,6 +137,26 @@ def make_imu(mode: str, calib: Calib) -> ImuDevice | None:
         imu.close()
         return None
     return imu
+
+
+def make_sonar(mode: str, calib: Calib) -> Sonar:
+    """Probe the HC-SR04. Absent is normal and not an error (contract 2.0.0).
+
+    The range is a telemetry field and situational awareness, not a safety interlock --
+    nothing in the runtime brakes on it, and an HC-SR04 does not see soft or angled surfaces
+    well enough to be trusted with that.
+    """
+    if mode == "off":
+        return Sonar()
+    try:
+        sonar = Sonar.open(calib.pins.sonar_trig, calib.pins.sonar_echo)
+    except SonarUnavailable as e:
+        if mode == "gpio":
+            raise
+        log.warning("sonar: none usable (%s); range_m will be null", e)
+        return Sonar()
+    log.info("sonar: %s on GPIO %d/%d", sonar.name, calib.pins.sonar_trig, calib.pins.sonar_echo)
+    return sonar
 
 
 def make_camera(mode: str, calib: Calib) -> Camera:
@@ -195,7 +183,7 @@ def make_camera(mode: str, calib: Calib) -> Camera:
 class HardwareBackend:
     """`ws_server.Backend` over the real hardware. Long ops run on one worker thread.
 
-    Everything the asyncio loop reads (pose, scoop, state) is either an immutable value
+    Everything the asyncio loop reads (pose, range, state) is either an immutable value
     replaced wholesale or a plain bool, so telemetry never needs a lock. Everything that
     blocks (motion, capture) goes through `_offload`.
     """
@@ -204,9 +192,9 @@ class HardwareBackend:
         self,
         calib: Calib,
         motors: Motors,
-        servos: ServoDriver,
         camera: Camera,
         imu: ImuDevice | None = None,
+        sonar: Sonar | None = None,
         store: LocalStore | None = None,
         mapper_url: str = DEFAULT_MAPPER,
         allow_uncalibrated: bool = False,
@@ -215,9 +203,11 @@ class HardwareBackend:
         # Bench mode: an uncalibrated station uploads keyframes only (station.py).
         self.allow_uncalibrated = allow_uncalibrated
         self.motors = motors
-        self.servos = servos
         self.camera = camera
         self.imu = imu
+        self.sonar = sonar
+        # Same reason as the IMU's poller: a read blocks and telemetry runs on the loop.
+        self.sonar_poller = SonarPoller(sonar) if sonar is not None and sonar.present else None
 
         self.run_id = ""
         self.ids = IdGen()
@@ -299,21 +289,18 @@ class HardwareBackend:
             gz_dps=float(r.get("gz_dps", 0.0)),
         )
 
+    def _range_m(self) -> float | None:
+        """From the poller cache. None means no reading, which is not the same as 0.0 m."""
+        return self.sonar_poller.cached() if self.sonar_poller is not None else None
+
     def telemetry(self) -> Telemetry:
-        shoulder = self.calib.servos.shoulder_ch
-        wrist = self.calib.servos.wrist_ch
-        stow = self.calib.scoop_us.get("STOW", (1500, 1500))
-        us = [
-            self.servos.last_us(shoulder) or stow[0],
-            self.servos.last_us(wrist) or stow[1],
-        ]
         return Telemetry(
             run_id=self.run_id,
             pose=self.pose.current(),
             state=self._state,
             estop=self._estop,
             imu=self._imu_reading(),
-            scoop=ScoopState(pose="STOW", us=us),
+            range_m=self._range_m(),
             cpu_temp_c=self._cpu_temp_c(),
             queue_len=1 if self._state not in ("IDLE", "ESTOP") else 0,
             # A COUNT over a few dozen index rows: well under a millisecond on the loop.
@@ -434,7 +421,6 @@ class HardwareBackend:
             self.safety,
             store=self.store,
             uploader=self.uploader,
-            servos=self.servos,
             ids=self.ids,  # k_ counters continue across the run's stations (doc 00 section 5)
             emit=self._station_event,
             allow_uncalibrated=self.allow_uncalibrated,
@@ -455,17 +441,11 @@ class HardwareBackend:
         self._log_event("info", kind, f"{kind} {detail}", detail)
 
     async def approach(self, cand_id: str, x: float, y: float) -> dict[str, Any]:
-        self.last_cand_id = cand_id  # scoop's sample.json needs it (doc 00 section 6.5)
+        self.last_cand_id = cand_id  # sample.json needs it (doc 00 section 6.5)
         raise self._refuse("approach")
 
-    async def scoop(self, sample_id: str) -> dict[str, Any]:
-        raise self._refuse("scoop")
-
-    async def dump(self) -> dict[str, Any]:
-        raise self._refuse("dump")
-
-    async def scoop_pose(self, pose: ScoopPoseName) -> dict[str, Any]:
-        raise self._refuse("scoop_pose")
+    async def sample(self, sample_id: str) -> dict[str, Any]:
+        raise self._refuse("sample")
 
     # --- safety hooks --------------------------------------------------------------------
 
@@ -499,7 +479,7 @@ class HardwareBackend:
     def inventory(self) -> dict[str, Any]:
         return {
             "motors": self.motors.present,
-            "servos": getattr(self.servos, "name", "?") if self.servos.present else False,
+            "sonar": self.sonar.present if self.sonar is not None else False,
             "imu": self.imu.detect() if self.imu is not None else False,
             "gyro": self.imu.has_gyro() if self.imu is not None else False,
             "camera": self.camera.backend if self.camera.present else False,
@@ -514,22 +494,26 @@ class HardwareBackend:
         }
 
     def close(self) -> None:
-        """Leave the hardware safe: brake, standby, release the servos, drop the pool."""
+        """Leave the hardware safe: stop the motors, drop the pool."""
         log.info("shutting down")
         if self.poller is not None:
             with contextlib.suppress(Exception):
                 self.poller.stop()
+        if self.sonar_poller is not None:
+            with contextlib.suppress(Exception):
+                self.sonar_poller.stop()
         with contextlib.suppress(Exception):
             self.motion.request_stop()
         with contextlib.suppress(Exception):
             self.motors.close()
         with contextlib.suppress(Exception):
-            self.servos.close()
-        with contextlib.suppress(Exception):
             self.camera.close()
         if self.imu is not None:
             with contextlib.suppress(Exception):
                 self.imu.close()
+        if self.sonar is not None:
+            with contextlib.suppress(Exception):
+                self.sonar.close()
         if self.uploader is not None:
             with contextlib.suppress(Exception):
                 self.uploader.stop()
@@ -551,15 +535,17 @@ def build_backend(
     allow_uncalibrated: bool = False,
 ) -> HardwareBackend:
     motors = make_motors(modes["motors"], calib)
-    servos = make_servos(modes["servos"], calib)
     imu = make_imu(modes["imu"], calib)
     camera = make_camera(modes["camera"], calib)
+    sonar = make_sonar(modes["sonar"], calib)
     store = LocalStore(store_root) if store_root is not None else None
     backend = HardwareBackend(
-        calib, motors, servos, camera, imu, store, mapper_url, allow_uncalibrated
+        calib, motors, camera, imu, sonar, store, mapper_url, allow_uncalibrated
     )
     if backend.poller is not None:
         backend.poller.start()
+    if backend.sonar_poller is not None:
+        backend.sonar_poller.start()
     if backend.uploader is not None:
         # Starts draining whatever an earlier boot left unsent, before any new station.
         backend.uploader.start()
@@ -589,10 +575,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="auto probes gpiozero and degrades to off; sim runs the real timing loop",
     )
     p.add_argument(
-        "--servos",
-        choices=("auto", "gpio", "pca9685", "off"),
-        default=env("ROVER_SERVOS", "auto"),
-        help="auto/gpio = straight off the Pi; pca9685 = the I2C fallback",
+        "--sonar",
+        choices=("auto", "gpio", "off"),
+        default=env("ROVER_SONAR", "auto"),
+        help="HC-SR04 forward range (contract 2.0.0); absent is fine, range_m goes null",
     )
     p.add_argument(
         "--imu",
@@ -636,10 +622,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 def modes_from(args: argparse.Namespace) -> dict[str, str]:
     if args.no_hw:
-        return dict.fromkeys(("motors", "servos", "imu", "camera"), "off")
+        return dict.fromkeys(("motors", "sonar", "imu", "camera"), "off")
     return {
         "motors": args.motors,
-        "servos": args.servos,
+        "sonar": args.sonar,
         "imu": args.imu,
         "camera": args.camera,
     }

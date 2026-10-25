@@ -1,7 +1,7 @@
 """fake_rover: a stand-in for the Raspberry Pi runtime, speaking the real WS protocol.
 
 Serves the brain <-> rover WebSocket contract (doc 00 section 6.2) on ws://<host>:8765/rover and
-the mapper uploads (doc 00 sections 6.4-6.5) with simulated motion, stations and scoops -- no
+the mapper uploads (doc 00 sections 6.4-6.5) with simulated motion, stations and samples -- no
 hardware, no camera, no SpacetimeDB. P4's brain and P3's mapper build against it from I0, so it
 follows the contract exactly even where that is less realistic than the real Pi.
 
@@ -13,9 +13,9 @@ follows the contract exactly even where that is less realistic than the real Pi.
 Flags
     --host / --port    bind address and port (doc 00 section 3: 8765, path /rover)
     --mapper URL       base URL for the station/sample uploads
-    --speed-scale N    run simulated time N times faster (drives, turns, stations, scoops)
+    --speed-scale N    run simulated time N times faster (drives, turns, stations, samples)
     --noise SIGMA      Gaussian dead-reckoning slip and IMU noise (0 = perfectly repeatable)
-    --fail-rate P      chance in [0, 1] that `approach`/`scoop` fail on purpose
+    --fail-rate P      chance in [0, 1] that `approach`/`sample` fail on purpose
     --seed N           RNG seed; the same seed replays the same stations and failures
     --no-upload        skip the HTTP POSTs and synthesise a successful mapper reply
 
@@ -80,8 +80,6 @@ from marsrover_shared.schemas import (  # noqa: E402
     RoverState,
     SampleJson,
     SampleReply,
-    ScoopPoseName,
-    ScoopState,
     StationJson,
     StationKeyframe,
     StationResult,
@@ -97,7 +95,7 @@ log = logging.getLogger("fake_rover")
 # --- contract constants ---------------------------------------------------------------------
 # Re-exported from the real protocol layer, never redefined: the mock and the Pi cannot
 # disagree about the ack budget or an op deadline. Same objects, so a test that does
-# monkeypatch.setitem(fake_rover.OP_TIMEOUT_S, "scoop", 0.05) still patches the live dict.
+# monkeypatch.setitem(fake_rover.OP_TIMEOUT_S, "sample", 0.05) still patches the live dict.
 
 ACK_BUDGET_S = ws_server.ACK_BUDGET_S
 TELEMETRY_HZ = ws_server.TELEMETRY_HZ
@@ -121,10 +119,9 @@ SIM_STEP_S = 0.05  # pose integration step, so 5 Hz telemetry shows motion
 MIN_REAL_STEP_S = 0.02  # asyncio rounds sleeps up to ~16 ms on Windows; don't undershoot it
 STATION_S = 5.0  # a whole station spin (P2 role doc 8), before --speed-scale
 STATION_DEDUPE_M = 0.05  # proposals closer than this merge (P2 role doc 5.5)
-SCOOP_STEP_S = 0.8  # per named scoop pose
-SCOOP_PUSH_M = 0.04  # the slow nudge in DEPLOY (P2 role doc 4, sequence_pick)
-SCOOP_STANDOFF_M = 0.10  # where `approach` parks: target this far ahead of the rover centre
-SCOOP_ZONE_TOL_M = 0.05
+SAMPLE_STEP_S = 0.8  # focus, settle and capture the close-up
+CLOSEUP_STANDOFF_M = 0.15  # where `approach` parks: the CM3's close focus distance
+CLOSEUP_TOL_M = 0.05
 APPROACH_SPEED = 0.4
 # Same objects as the real Pi's uploader, like the ws_server constants above.
 UPLOAD_TIMEOUT_S = uploader.UPLOAD_TIMEOUT_S
@@ -132,14 +129,6 @@ RETRY_MIN_S, RETRY_MAX_S = uploader.RETRY_MIN_S, uploader.RETRY_MAX_S
 
 HOME_POSE = Pose(x=0.0, y=0.0, heading_deg=0.0, source="dr+gyro", sigma_xy_m=0.01)
 # UNVERIFIED: plausible servo microseconds per named pose. The real values come from
-# rover/calib/calib.yaml (scoop_us) once calibrate_scoop.py has run on the hardware.
-SCOOP_US: dict[str, list[int]] = {
-    "STOW": [1500, 1500],
-    "DEPLOY": [1900, 1200],
-    "CURL": [1700, 1800],
-    "PRESENT": [1300, 1750],
-    "DUMP": [1850, 1100],
-}
 
 # --- synthetic imagery ---------------------------------------------------------------------
 
@@ -230,13 +219,12 @@ def render_bev(rng: random.Random, rocks_rover: list[tuple[float, float, float]]
     return _png(img)
 
 
-def render_present(rng: random.Random, sample_id: str) -> bytes:
-    """The scoop held up to the camera: doc 00 section 6.5 present.jpg."""
+def render_closeup(rng: random.Random, sample_id: str) -> bytes:
+    """The target photographed close up: doc 00 section 6.5 closeup.jpg (contract 2.0.0)."""
     img = _grain(rng, KF_W, KF_H)
     draw = ImageDraw.Draw(img)
-    draw.rectangle([60, 70, 260, 200], fill=(118, 118, 126))
-    draw.ellipse([130, 110, 190, 165], fill=ROCK_RGB)
-    draw.text((8, 8), f"PRESENT {sample_id} (simulated)", fill=(25, 25, 25))
+    draw.ellipse([90, 60, 230, 190], fill=ROCK_RGB)
+    draw.text((8, 8), f"CLOSEUP {sample_id} (simulated)", fill=(25, 25, 25))
     return _jpeg(img)
 
 
@@ -257,17 +245,17 @@ class Options:
 
 @dataclass
 class SimState:
-    """The rover's whole observable state. Pose/scoop are replaced, never mutated in place."""
+    """The rover's whole observable state. Pose is replaced, never mutated in place."""
 
     run_id: str = ""
     pose: Pose = field(default_factory=lambda: HOME_POSE)
     state: RoverState = "IDLE"
     estop: bool = False
-    scoop: ScoopState = field(default_factory=lambda: ScoopState(pose="STOW", us=SCOOP_US["STOW"]))
+    range_m: float | None = 0.42  # a plausible HC-SR04 reading (contract 2.0.0)
     gz_dps: float = 0.0
     stop_flag: bool = False
     last_heartbeat: float = field(default_factory=time.monotonic)
-    last_cand_id: str = ""  # doc 00 6.5 wants a cand_id that `scoop` args don't carry
+    last_cand_id: str = ""  # doc 00 6.5 wants a cand_id that `sample` args don't carry
     ids: IdGen = field(default_factory=IdGen)
     retry_queue: list[dict] = field(default_factory=list)
 
@@ -393,7 +381,7 @@ class Sim:
                 az=9.79 + self._sensor_noise(),
                 gz_dps=st.gz_dps,
             ),
-            scoop=st.scoop,
+            range_m=st.range_m,
             cpu_temp_c=55.2,
             queue_len=1 if self._running_op else 0,
             uplink_backlog=len(st.retry_queue),
@@ -444,9 +432,6 @@ class Sim:
             return await self._advance(abs(ddeg) / w, lambda dt: self._rotate(sign * w * dt))
         finally:
             self.st.gz_dps = 0.0
-
-    def _set_scoop(self, pose: ScoopPoseName) -> None:
-        self.st.scoop = ScoopState(pose=pose, us=SCOOP_US[pose])
 
     def _maybe_fail(self, codes: tuple[ErrCode, ...]) -> ErrCode | None:
         """--fail-rate: pick an injected failure so the brain's retry paths get exercised."""
@@ -511,60 +496,40 @@ class Sim:
         # when imu.has_gyro() is false (P2 role doc section 4, motion.turn).
         return {"pose": self.st.pose.model_dump(), "method": "gyro"}
 
-    async def scoop_pose(self, pose: ScoopPoseName) -> dict:
-        self.st.state = "SCOOPING"
-        try:
-            self._set_scoop(pose)
-            await self.sleep(SCOOP_STEP_S)
-        finally:
-            self._idle()
-        return {"ok": True}
-
-    async def dump(self) -> dict:
-        self.st.state = "SCOOPING"
-        try:
-            for pose in ("DUMP", "STOW"):
-                self._set_scoop(pose)
-                await self.sleep(SCOOP_STEP_S)
-        finally:
-            self._idle()
-        return {"ok": True}
-
     async def approach(self, cand_id: str, x: float, y: float) -> dict:
         st = self.st
         st.stop_flag = False
         st.state = "APPROACH"
-        st.last_cand_id = cand_id  # `scoop` needs it for sample.json (doc 00 section 6.5)
+        st.last_cand_id = cand_id  # `sample` needs it for sample.json (doc 00 section 6.5)
         failure = self._maybe_fail(("E_LOST_TARGET",))
         try:
             bearing = math.degrees(math.atan2(y - st.pose.y, x - st.pose.x))
             await self._turn_by(wrap_deg(bearing - st.pose.heading_deg), APPROACH_SPEED)
             if failure is not None:
                 raise OpError(failure, f"lost {cand_id} while closing in")
-            gap = math.dist((st.pose.x, st.pose.y), (x, y)) - SCOOP_STANDOFF_M
+            gap = math.dist((st.pose.x, st.pose.y), (x, y)) - CLOSEUP_STANDOFF_M
             await self._drive_by(gap, APPROACH_SPEED)
-            # Residual in the scoop camera's frame: image +x is rover -y, image +y is rover -x.
+            # Residual in the camera's frame: image +x is rover -y, image +y is rover -x.
             rx, ry = mission_to_rover(st.pose, (x, y))
-            offset_px = [round(-ry / BEV_RES_M_PX), round(-(rx - SCOOP_STANDOFF_M) / BEV_RES_M_PX)]
-            in_zone = math.dist((rx, ry), (SCOOP_STANDOFF_M, 0.0)) <= SCOOP_ZONE_TOL_M
+            offset_px = [
+                round(-ry / BEV_RES_M_PX),
+                round(-(rx - CLOSEUP_STANDOFF_M) / BEV_RES_M_PX),
+            ]
+            in_zone = math.dist((rx, ry), (CLOSEUP_STANDOFF_M, 0.0)) <= CLOSEUP_TOL_M
         finally:
             self._idle()
         return {"in_zone": in_zone, "pose": st.pose.model_dump(), "offset_px": offset_px}
 
-    async def scoop(self, sample_id: str) -> dict:
+    async def sample(self, sample_id: str) -> dict:
+        """Photograph the target close up and upload it (contract 2.0.0)."""
         st = self.st
         st.stop_flag = False
-        st.state = "SCOOPING"
-        failure = self._maybe_fail(("E_SCOOP", "E_UPLOAD"))
+        st.state = "SAMPLING"
+        failure = self._maybe_fail(("E_CAMERA", "E_UPLOAD"))
         try:
-            self._set_scoop("DEPLOY")
-            await self._drive_by(SCOOP_PUSH_M, 0.2)  # P2 role doc 4: nudge forward, slowly
-            await self.sleep(SCOOP_STEP_S)
-            for pose in ("CURL", "PRESENT"):
-                self._set_scoop(pose)
-                await self.sleep(SCOOP_STEP_S)
-            if failure == "E_SCOOP":
-                raise OpError("E_SCOOP", f"scoop came up empty for {sample_id}")
+            await self.sleep(SAMPLE_STEP_S)  # focus to ~0.15 m, settle, capture
+            if failure == "E_CAMERA":
+                raise OpError("E_CAMERA", f"could not focus on {sample_id}")
             if failure == "E_UPLOAD":
                 raise OpError("E_UPLOAD", f"could not hand {sample_id} to the mapper")
             sample = SampleJson(
@@ -574,17 +539,16 @@ class Sim:
                 t=time.time(),
                 pose=st.pose,
             )
-            url, uploaded = await self.upload_sample(sample, render_present(self.rng, sample_id))
+            url, uploaded = await self.upload_sample(sample, render_closeup(self.rng, sample_id))
         finally:
             self._idle()
-        return {"present_image": url, "uploaded": uploaded, "pose": st.pose.model_dump()}
+        return {"image_url": url, "uploaded": uploaded, "pose": st.pose.model_dump()}
 
     async def station(self, station_id: str, n_views: int, step_deg: float) -> dict:
         """Spin, capture a keyframe per heading, propose rocks, stitch a BEV tile, upload."""
         st = self.st
         st.stop_flag = False
         st.state = "STATION"
-        self._set_scoop("STOW")  # or the scoop is in every photo (P2 role doc section 9)
         base = st.pose  # the station's position; only the heading changes while spinning
         start_heading = base.heading_deg
         t0 = time.time()
@@ -696,8 +660,8 @@ class Sim:
             )
 
     async def upload_sample(self, sample: SampleJson, jpg: bytes) -> tuple[str, bool]:
-        """Returns (present_image, uploaded) for the `scoop` result."""
-        local = f"runs/{sample.run_id}/samples/{sample.sample_id}/present.jpg"
+        """Returns (image_url, uploaded) for the `sample` result."""
+        local = f"runs/{sample.run_id}/samples/{sample.sample_id}/closeup.jpg"
         if self.opts.no_upload:
             return f"{self.opts.mapper}/files/{local}", True
         try:
@@ -743,7 +707,7 @@ class Sim:
             return MapperStationReply.model_validate_json(r.content)
 
     async def _post_sample(self, sample: SampleJson, jpg: bytes) -> SampleReply:
-        parts = multipart("sample.json", sample.model_dump_json(), {"present.jpg": jpg})
+        parts = multipart("sample.json", sample.model_dump_json(), {"closeup.jpg": jpg})
         async with httpx.AsyncClient(timeout=UPLOAD_TIMEOUT_S) as client:
             r = await client.post(f"{self.opts.mapper}/ingest/sample", files=parts)
             r.raise_for_status()

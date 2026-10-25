@@ -209,7 +209,7 @@ def b64(img: Image.Image, fmt: str) -> str:
 
 
 def present_photo(r: Rock | None) -> str:
-    img = Image.new("RGB", (240, 180), (150, 150, 155))  # scoop interior
+    img = Image.new("RGB", (240, 180), (150, 150, 155))  # close-up of the target
     draw = ImageDraw.Draw(img)
     draw.rounded_rectangle(
         [20, 30, 220, 160], 18, fill=(185, 185, 190), outline=(90, 90, 95), width=3
@@ -285,7 +285,6 @@ class FakeRun:
                     round(self.battery, 3),
                     55.0 + self.rng.uniform(-1, 1),
                     json.dumps(imu),
-                    "DEPLOY" if self.state == "SCOOPING" else "STOW",
                     0,
                 )
             self.tick_n += 1
@@ -497,7 +496,7 @@ class FakeRun:
         self.event("plan", "Top-k route: " + " -> ".join(r.cand_id for r in route))
         self.tick(2)
         self.fsm = "INVESTIGATE"
-        outcomes = ["sampled", "sampled", "empty_scoop"]
+        outcomes = ["sampled", "sampled", "skipped"]
         for r, tid, outcome in zip(route, visit_tasks, outcomes, strict=False):
             self.visit(r, tid, outcome)
 
@@ -508,12 +507,12 @@ class FakeRun:
         self.drive_to(r.x, r.y, stop_short_m=0.12)
         self.state = "APPROACH"
         self.tick(4)
-        self.state = "SCOOPING"
+        self.state = "SAMPLING"
         self.tick(8)
         sample_id = self.ids.next("a")
         visit_id = self.ids.next("v")
-        if outcome == "empty_scoop":
-            self.event("scoop", f"{r.cand_id}: scoop came up empty, retrying once", "warn")
+        if outcome == "skipped":
+            self.event("sample", f"{r.cand_id}: target not in frame, retrying once", "warn")
             self.tick(8)
             self.call(
                 "add_analysis",
@@ -525,7 +524,7 @@ class FakeRun:
                 present_photo(None),
                 "",
                 0.0,
-                "Empty scoop.",
+                "Target not in frame.",
                 False,
                 "",
                 -1.0,

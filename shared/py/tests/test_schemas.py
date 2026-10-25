@@ -27,7 +27,7 @@ TELEMETRY = {
     "state": "IDLE",
     "estop": False,
     "imu": {"ax": 0.01, "ay": -0.02, "az": 9.79, "gz_dps": 0.4},
-    "scoop": {"pose": "STOW", "us": [1500, 1500]},
+    "range_m": 0.42,
     "cpu_temp_c": 55.2,
     "queue_len": 0,
     "uplink_backlog": 0,
@@ -60,7 +60,6 @@ STATION = {
 # 6.7 golden vector (standards list truncated to the entries doc 00 prints in full).
 ANALYSIS = {
     "sample_id": "a_0001",
-    "scoop_has_item": True,
     "label": "float_rock",
     "confidence": 0.62,
     "caption": "A small angular dark rock fragment with a smooth face.",
@@ -172,7 +171,7 @@ def test_cmd_validates_args_per_op():
     for op, args in [
         ("drive", {"dist_m": 0.3, "speed": 2}),
         ("turn", {"deg": 90}),
-        ("scoop_pose", {"pose": "WAVE"}),
+        ("sample", {}),
         ("stop", {"x": 1}),
     ]:
         with pytest.raises(ValidationError):

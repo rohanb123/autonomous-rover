@@ -48,8 +48,8 @@ DOC01_PINS = {
     "in3": 20,
     "in4": 21,
     "led": 22,
-    "servo_shoulder": 18,
-    "servo_wrist": 19,
+    "sonar_trig": 23,
+    "sonar_echo": 24,
 }
 
 

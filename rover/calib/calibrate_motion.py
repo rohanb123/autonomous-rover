@@ -161,7 +161,7 @@ class Rig:
         if not sim:
             with contextlib.suppress(Exception):
                 from rover.imu import Imu
-                from rover.servos import Smbus2Bus
+                from rover.i2c import Smbus2Bus
 
                 imu = Imu(Smbus2Bus(calib.i2c.bus), tuple(calib.i2c.imu_addrs))
                 self.imu = imu if imu.present and imu.has_gyro() else None

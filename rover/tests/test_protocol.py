@@ -227,7 +227,7 @@ def test_heartbeat_is_never_acked():
             {"op": "turn", "args": {"deg": 90, "speed": 0.5, "nope": 1}}, id="unknown-arg"
         ),
         pytest.param({"op": "fly", "args": {}}, id="unknown-op"),
-        pytest.param({"op": "scoop_pose", "args": {"pose": "WIGGLE"}}, id="bad-enum"),
+        pytest.param({"op": "sample", "args": {}}, id="missing-required-arg"),
         pytest.param({"op": "drive", "args": {"dist_m": "far", "speed": 0.5}}, id="wrong-type"),
     ],
 )
@@ -283,7 +283,7 @@ def test_telemetry_runs_at_5hz_and_validates():
                 assert f.run_id == RUN_ID and f.src == "rover"
                 assert f.state == "IDLE" and not f.estop
                 assert f.imu.az == pytest.approx(9.79, abs=0.5)
-                assert f.scoop.pose == "STOW" and len(f.scoop.us) == 2
+                assert f.range_m is None or 0.0 <= f.range_m <= 4.0
                 assert f.queue_len == 0 and f.uplink_backlog == 0
 
     run(go())
@@ -413,7 +413,7 @@ def test_ops_are_refused_while_latched_then_clear_estop_restores():
                 ("drive", {"dist_m": 0.1, "speed": 0.5}),
                 ("turn", {"deg": 10.0, "speed": 0.5}),
                 ("station", {"station_id": "s_0001"}),
-                ("dump", {}),
+                ("sample", {"sample_id": "a_0001"}),
                 ("stop", {}),
             ):
                 assert (await link.err(op, **args)).code == "E_ESTOP", op
@@ -656,10 +656,10 @@ def test_station_upload_posts_the_contract_multipart():
     assert parts["bev.png"].startswith(b"\x89PNG")
 
 
-# --- step 6: approach, scoop, dump, scoop_pose, snapshot, per-op timeouts -------------------
+# --- step 6: approach, sample, snapshot, per-op timeouts ------------------------------------
 
 
-def test_approach_ends_in_the_scoop_zone():
+def test_approach_ends_within_close_up_range():
     async def go():
         async with rover() as (link, sim):
             await link.done("start_run", run_id=RUN_ID)
@@ -668,39 +668,24 @@ def test_approach_ends_in_the_scoop_zone():
             assert len(result["offset_px"]) == 2
             assert all(abs(v) <= 2 for v in result["offset_px"])
             gap = dist(result["pose"], 0.5, 0.3)
-            assert gap == pytest.approx(fake_rover.SCOOP_STANDOFF_M, abs=0.03)
-            assert sim.st.last_cand_id == "c_0007"  # `scoop` needs it for sample.json
+            assert gap == pytest.approx(fake_rover.CLOSEUP_STANDOFF_M, abs=0.03)
+            assert sim.st.last_cand_id == "c_0007"  # `sample` needs it for sample.json
 
     run(go())
 
 
-def test_scoop_cycles_the_poses_and_reports_the_present_image():
+def test_sample_photographs_the_target_and_reports_the_image_url():
     async def go():
         async with rover(fake_rover.Options(speed_scale=4.0, no_upload=True)) as (link, sim):
             await link.done("start_run", run_id=RUN_ID)
             await link.done("approach", timeout=15.0, cand_id="c_0007", x=0.4, y=0.0)
             link.telemetry.clear()
-            result = await link.done("scoop", timeout=20.0, sample_id="a_0001")
-            assert result["present_image"].endswith(".jpg")
+            result = await link.done("sample", timeout=20.0, sample_id="a_0001")
+            assert result["image_url"].endswith(".jpg")
             assert result["uploaded"] is True  # --no-upload fakes a stored sample
-            assert "a_0001" in result["present_image"]
-            assert dist(result["pose"], 0.0, 0.0) > 0.0
-            poses = {f.scoop.pose for f in link.telemetry}
-            assert poses & {"DEPLOY", "CURL", "PRESENT"}, poses
-            assert any(f.state == "SCOOPING" for f in link.telemetry)
-            assert sim.st.scoop.pose == "PRESENT"
-
-    run(go())
-
-
-def test_dump_and_scoop_pose_return_ok_and_move_the_scoop():
-    async def go():
-        async with rover() as (link, sim):
-            assert await link.done("scoop_pose", pose="DEPLOY") == {"ok": True}
-            assert sim.st.scoop.pose == "DEPLOY"
-            assert sim.st.scoop.us == fake_rover.SCOOP_US["DEPLOY"]
-            assert await link.done("dump", timeout=10.0) == {"ok": True}
-            assert sim.st.scoop.pose == "STOW"  # dump ends stowed
+            assert "a_0001" in result["image_url"]
+            assert any(f.state == "SAMPLING" for f in link.telemetry)
+            assert sim.st.state == "IDLE"
 
     run(go())
 
@@ -715,12 +700,14 @@ def test_snapshot_returns_the_pi_debug_url():
 
 
 def test_an_op_that_overruns_its_deadline_gets_e_timeout(monkeypatch):
-    monkeypatch.setitem(fake_rover.OP_TIMEOUT_S, "scoop", 0.05)
+    # `sample` is one 0.8 s step, which FAST scales to 0.04 s -- so the deadline has to be
+    # tighter than that to actually be overrun. The old `scoop` was several steps long.
+    monkeypatch.setitem(fake_rover.OP_TIMEOUT_S, "sample", 0.01)
 
     async def go():
         async with rover() as (link, sim):
             await link.done("start_run", run_id=RUN_ID)
-            final = await link.err("scoop", timeout=10.0, sample_id="a_0001")
+            final = await link.err("sample", timeout=10.0, sample_id="a_0001")
             assert final.code == "E_TIMEOUT"
             assert sim.st.state == "IDLE"
             # The slot is released, so the next op is not E_BUSY.
@@ -784,7 +771,7 @@ def test_the_same_seed_replays_the_same_station():
     assert _stable(first) != _stable(other), "a different seed should change the station"
 
 
-def test_fail_rate_one_makes_approach_and_scoop_report_their_codes():
+def test_fail_rate_one_makes_approach_and_sample_report_their_codes():
     always = fake_rover.Options(speed_scale=20.0, no_upload=True, fail_rate=1.0, seed=3)
 
     async def go():
@@ -792,8 +779,8 @@ def test_fail_rate_one_makes_approach_and_scoop_report_their_codes():
             await link.done("start_run", run_id=RUN_ID)
             lost = await link.err("approach", timeout=15.0, cand_id="c_0001", x=0.4, y=0.0)
             assert lost.code == "E_LOST_TARGET"
-            scooped = await link.err("scoop", timeout=15.0, sample_id="a_0001")
-            assert scooped.code in ("E_SCOOP", "E_UPLOAD")
+            sampled = await link.err("sample", timeout=15.0, sample_id="a_0001")
+            assert sampled.code in ("E_CAMERA", "E_UPLOAD")
 
     run(go())
 

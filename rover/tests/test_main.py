@@ -42,7 +42,7 @@ from rover.config import parse_calib  # noqa: E402
 CALIB = parse_calib(helpers.CALIB_DICT)
 PINS = CALIB.pins
 RUN_ID = "r_20261024_101500"
-ALL_OFF = dict.fromkeys(("motors", "servos", "imu", "camera"), "off")
+ALL_OFF = dict.fromkeys(("motors", "sonar", "imu", "camera"), "off")
 
 
 def backend(**modes: str) -> rover_main.HardwareBackend:
@@ -57,7 +57,7 @@ def test_everything_off_builds_on_a_laptop():
     try:
         assert b.inventory() == {
             "motors": False,
-            "servos": False,  # the backend name once one is live, e.g. "gpio"
+            "sonar": False,  # the HC-SR04, contract 2.0.0
             "imu": False,  # or "mpu6050@0x68"
             "gyro": False,  # docs/05 U-2: this is what decides gyro vs timed turns
             "camera": False,  # or "picamera2"
@@ -76,7 +76,7 @@ def test_auto_degrades_instead_of_crashing(caplog: pytest.LogCaptureFixture):
     b = rover_main.build_backend(CALIB, dict.fromkeys(ALL_OFF, "auto"))
     try:
         inv = b.inventory()
-        assert inv["motors"] is False and inv["servos"] is False
+        assert inv["motors"] is False and inv["sonar"] is False
     finally:
         b.close()
 
@@ -147,7 +147,7 @@ def test_an_unknown_device_mode_is_rejected():
 
 @pytest.mark.parametrize("op", sorted(rover_main.UNBUILT))
 def test_unbuilt_ops_name_what_is_missing(op: str, tmp_path: Path, monkeypatch):
-    """Not E_LOST_TARGET or E_SCOOP: fsm.py maps those onto physical outcomes and carries on,
+    """Not E_LOST_TARGET: fsm.py maps that onto a physical outcome and carries on,
     so using them would make the brain invent sample results for code that does not exist."""
     monkeypatch.setenv("MARSROVER_DATA_DIR", str(tmp_path))
     b = backend()
@@ -156,8 +156,7 @@ def test_unbuilt_ops_name_what_is_missing(op: str, tmp_path: Path, monkeypatch):
         args = {
             "station": {"station_id": "s_0001", "n_views": 8, "step_deg": 45.0},
             "approach": {"cand_id": "c_0001", "x": 0.4, "y": 0.0},
-            "scoop": {"sample_id": "a_0001"},
-            "scoop_pose": {"pose": "STOW"},
+            "sample": {"sample_id": "a_0001"},
         }.get(op, {})
         handler = getattr(b, op)
         with pytest.raises(ws_server.OpError) as exc:
@@ -175,7 +174,7 @@ def test_unbuilt_ops_name_what_is_missing(op: str, tmp_path: Path, monkeypatch):
 
 
 def test_approach_still_remembers_the_cand_id_it_was_given():
-    """scoop's sample.json needs a cand_id that its own args don't carry (doc 00 section 6.5)."""
+    """sample.json needs a cand_id that `sample` args don't carry (doc 00 section 6.5)."""
     b = backend()
     try:
         with pytest.raises(ws_server.OpError):
@@ -207,7 +206,7 @@ def test_telemetry_validates_and_reports_no_imu_as_zeros():
         assert isinstance(t, Telemetry)
         assert (t.imu.ax, t.imu.ay, t.imu.az, t.imu.gz_dps) == (0.0, 0.0, 0.0, 0.0)
         assert t.state == "IDLE" and t.estop is False
-        assert t.scoop.us == [1500, 1500]  # calib's STOW until servos.py is driving
+        assert t.range_m is None  # no sonar attached in this fixture
         assert t.uplink_backlog == 0  # no store passed, so no upload queue
     finally:
         b.close()

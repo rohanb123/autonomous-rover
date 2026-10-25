@@ -14,7 +14,7 @@ What the protocol layer owns:
   * parsing every frame with `Cmd.model_validate_json`, and `E_BAD_ARGS` when that fails
   * `ack` within 0.5 s, then exactly one `done` or `err`
   * one long op at a time; a second gets `E_BUSY`
-  * per-op deadlines (station 60 s, approach 45 s, scoop 30 s) -> `E_TIMEOUT`
+  * per-op deadlines (station 60 s, approach 45 s, sample 30 s) -> `E_TIMEOUT`
   * 5 Hz telemetry, 20 Hz watchdog
   * the E-STOP latch gate: while latched, only clear_estop/heartbeat/set_pose/snapshot run
 
@@ -55,7 +55,7 @@ TELEMETRY_HZ = 5.0
 WATCHDOG_HZ = 20.0
 HEARTBEAT_TIMEOUT_S = 1.0  # no heartbeat for this long *while moving* -> stop the motors
 # Per-op done deadlines. Read at dispatch time so a test can shrink them.
-OP_TIMEOUT_S: dict[str, float] = {"station": 60.0, "approach": 45.0, "scoop": 30.0}
+OP_TIMEOUT_S: dict[str, float] = {"station": 60.0, "approach": 45.0, "sample": 30.0}
 # Doc 00 section 3: the real Pi serves this on :8080; this layer only hands the URL out.
 SNAPSHOT_URL = "http://192.168.50.20:8080/snapshot.jpg"
 
@@ -113,9 +113,7 @@ class Backend(Protocol):
     async def turn(self, deg: float, speed: float) -> dict[str, Any]: ...
     async def station(self, station_id: str, n_views: int, step_deg: float) -> dict[str, Any]: ...
     async def approach(self, cand_id: str, x: float, y: float) -> dict[str, Any]: ...
-    async def scoop(self, sample_id: str) -> dict[str, Any]: ...
-    async def dump(self) -> dict[str, Any]: ...
-    async def scoop_pose(self, pose: str) -> dict[str, Any]: ...
+    async def sample(self, sample_id: str) -> dict[str, Any]: ...
 
     # --- safety hooks ---
     def on_heartbeat(self) -> None: ...
@@ -362,12 +360,8 @@ class Session:
             return await backend.station(**cmd.args)
         if cmd.op == "approach":
             return await backend.approach(**cmd.args)
-        if cmd.op == "scoop":
-            return await backend.scoop(**cmd.args)
-        if cmd.op == "dump":
-            return await backend.dump()
-        if cmd.op == "scoop_pose":
-            return await backend.scoop_pose(**cmd.args)
+        if cmd.op == "sample":
+            return await backend.sample(**cmd.args)
         raise OpError("E_INTERNAL", f"{cmd.op} has no handler")
 
     async def _run_long(self, cmd: Cmd) -> None:

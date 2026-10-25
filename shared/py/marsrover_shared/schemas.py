@@ -15,7 +15,6 @@ from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, model_validator
 Src = Literal["brain", "rover", "dashboard", "vision", "mapper", "overhead"]
 Category = Literal["float_rock", "layered", "veined", "sand", "bedrock", "pebble", "any"]
 PoseSource = Literal["dr", "dr+gyro", "vo", "aruco", "fused"]
-ScoopPoseName = Literal["STOW", "DEPLOY", "CURL", "PRESENT", "DUMP"]
 
 _now = time.time
 
@@ -64,9 +63,7 @@ Op = Literal[
     "set_pose",
     "station",
     "approach",
-    "scoop",
-    "dump",
-    "scoop_pose",
+    "sample",
     "snapshot",
     "heartbeat",
 ]
@@ -79,10 +76,9 @@ ErrCode = Literal[
     "E_CAMERA",
     "E_LOST_TARGET",
     "E_UPLOAD",
-    "E_SCOOP",
     "E_INTERNAL",
 ]
-RoverState = Literal["IDLE", "MOVING", "STATION", "APPROACH", "SCOOPING", "ESTOP"]
+RoverState = Literal["IDLE", "MOVING", "STATION", "APPROACH", "SAMPLING", "ESTOP"]
 
 
 class NoArgs(_Model):
@@ -122,12 +118,8 @@ class ApproachArgs(_Model):
     y: float
 
 
-class ScoopArgs(_Model):
+class SampleArgs(_Model):
     sample_id: str
-
-
-class ScoopPoseArgs(_Model):
-    pose: ScoopPoseName
 
 
 CMD_ARGS: dict[str, type[_Model]] = {
@@ -140,9 +132,7 @@ CMD_ARGS: dict[str, type[_Model]] = {
     "set_pose": SetPoseArgs,
     "station": StationArgs,
     "approach": ApproachArgs,
-    "scoop": ScoopArgs,
-    "dump": NoArgs,
-    "scoop_pose": ScoopPoseArgs,
+    "sample": SampleArgs,
     "snapshot": NoArgs,
     "heartbeat": NoArgs,
 }
@@ -194,11 +184,6 @@ class Imu(_Model):
     gz_dps: float
 
 
-class ScoopState(_Model):
-    pose: ScoopPoseName
-    us: list[int] = Field(min_length=2, max_length=2)
-
-
 class Telemetry(_Model):
     type: Literal["telemetry"] = "telemetry"
     t: float = Field(default_factory=_now)
@@ -208,7 +193,9 @@ class Telemetry(_Model):
     state: RoverState
     estop: bool
     imu: Imu
-    scoop: ScoopState
+    # HC-SR04 forward range, metres. None when no sonar is attached or the last
+    # echo timed out -- a missing reading and a zero reading mean opposite things.
+    range_m: float | None = None
     cpu_temp_c: float
     queue_len: int = Field(ge=0)
     uplink_backlog: int = Field(ge=0)
@@ -389,12 +376,11 @@ class Assay(_Model):
 
 class AnalysisResult(_Model):
     sample_id: str
-    scoop_has_item: bool
     label: str
     confidence: float
     caption: str
     simulated: Literal[True]
-    assay: Assay | None = None  # omitted when scoop_has_item is false
+    assay: Assay | None = None  # omitted when the target is not in frame
 
 
 # --- 6.8 - 6.10 Candidate, Task, Visit ---------------------------------------------
@@ -440,7 +426,7 @@ class Visit(_Model):
     y: float
     radius_m: float = 0.20
     t: float
-    outcome: Literal["sampled", "empty_scoop", "unreachable", "skipped"]
+    outcome: Literal["sampled", "unreachable", "skipped"]
 
 
 # --- 6.11 Dashboard -> brain REST --------------------------------------------------

@@ -117,7 +117,6 @@ class Station:
         *,
         store: _Store | None = None,
         uploader: _Uploader | None = None,
-        servos: Any = None,
         ids: IdGen | None = None,
         emit: Any = None,
         clock: Any = time.time,
@@ -131,7 +130,6 @@ class Station:
         self.safety = safety
         self.store = store
         self.uploader = uploader
-        self.servos = servos
         self.ids = ids or IdGen()
         self.emit = emit or (lambda kind, detail: None)
         self.clock = clock
@@ -183,7 +181,6 @@ class Station:
             {"n_views": n_views, "step_deg": step_deg, "calibrated": self.geometry_ok},
         )
 
-        self._stow_scoop()
         self._prepare_camera()
         keyframes, jpegs, views, raw = self._capture_views(n_views, step_deg)
 
@@ -228,21 +225,6 @@ class Station:
         return {**station.model_dump(mode="json"), "mapper": reply.model_dump(mode="json")}
 
     # --- steps ----------------------------------------------------------------------------
-
-    def _stow_scoop(self) -> None:
-        """STOW before the first photo, or the scoop is in all eight of them."""
-        if self.servos is None or not getattr(self.servos, "present", False):
-            return
-        stow = self.calib.scoop_us.get("STOW")
-        if stow is None:
-            return
-        try:
-            self.servos.write_us(self.calib.servos.shoulder_ch, stow[0])
-            self.servos.write_us(self.calib.servos.wrist_ch, stow[1])
-        except Exception as e:  # a missing servo must not cost us the survey
-            log.warning("could not stow the scoop: %s", e)
-            return
-        self.sleep(self.calib.servos.ramp_s)
 
     def _prepare_camera(self) -> None:
         """Focus for the ground, then pin exposure -- and report whether it took.
