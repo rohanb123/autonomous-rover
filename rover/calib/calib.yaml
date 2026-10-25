@@ -64,9 +64,10 @@ bev:
   bev_res_m_px: 0.005       # docs/00 section 4
   bev_size_px: 360          # 1.8 m square (P2 role doc section 6)
   homography:               # UNVERIFIED: identity placeholder. A station built on identity is
-    - [1.0, 0.0, 0.0]       # geometrically meaningless, so station.py (I2) must refuse to run
-    - [0.0, 1.0, 0.0]       # while calibrated_at is null rather than upload nonsense to the mapper.
-    - [0.0, 0.0, 1.0]
+    - [1.0, 0.0, 0.0]       # geometrically meaningless, so while calibrated_at is null
+    - [0.0, 1.0, 0.0]       # station.py refuses -- or, with --allow-uncalibrated, uploads
+    - [0.0, 0.0, 1.0]       # keyframes ONLY: no bev.png and no proposals, so no xy is
+                            # invented. rover/calib/calibrate_camera.py measures this.
 
 camera:
   # The nav camera is a Camera Module 3 on the CSI ribbon, driven by picamera2.
