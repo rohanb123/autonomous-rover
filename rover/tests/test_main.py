@@ -64,6 +64,8 @@ def test_everything_off_builds_on_a_laptop():
             "exposure_locked": False,
             "focus_locked": False,
             "calibrated": False,
+            "station": False,  # no --store and no camera: a station cannot run
+            "station_geometry": False,  # and would carry no geometry if it could
         }
     finally:
         b.close()
