@@ -27,6 +27,7 @@ BEV. `--check` does exactly that from an independent fifth point.
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import re
 import sys
 from datetime import UTC, datetime
@@ -42,6 +43,13 @@ for _p in (_ROOT / "shared" / "py", _ROOT / "rover"):
 
 from rover.bev import pixel_to_rover_xy, rover_to_bev_px  # noqa: E402
 from rover.config import load_calib  # noqa: E402
+
+_spec = importlib.util.spec_from_file_location(
+    "calib_edit", Path(__file__).parent / "calib_edit.py"
+)
+assert _spec and _spec.loader
+calib_edit = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(calib_edit)
 
 CALIB_PATH = _ROOT / "rover" / "calib" / "calib.yaml"
 
@@ -205,14 +213,11 @@ def rewrite_calib(text: str, H: np.ndarray, when: str) -> str:
     replacement = f"  homography:               # measured by calibrate_camera.py on {when}\n{rows}"
     text = pattern.sub(lambda _m: replacement, text, count=1)
 
-    stamp = re.compile(r"^calibrated_at:[^\r\n]*", re.MULTILINE)
-    if not stamp.search(text):
-        raise CalibrationError("could not find calibrated_at in calib.yaml")
-    return stamp.sub(
-        f'calibrated_at: "{when}"   # set by calibrate_camera.py; null = nothing is measured.',
-        text,
-        count=1,
-    )
+    # The stamp is shared with calibrate_motion.py, so it lives in one place.
+    try:
+        return calib_edit.set_calibrated_at(text, when, "calibrate_camera.py")
+    except calib_edit.CalibEditError as e:
+        raise CalibrationError(str(e)) from e
 
 
 # --- input ---------------------------------------------------------------------------------
