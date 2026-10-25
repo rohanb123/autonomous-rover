@@ -28,6 +28,10 @@ HEARTBEAT_S = 0.25
 # done timeouts per op (doc 00 §4); motion gets a generous default.
 DONE_TIMEOUT_S = {"station": 60.0, "approach": 45.0, "sample": 30.0}
 DEFAULT_DONE_TIMEOUT_S = 30.0
+# The Pi enforces the same deadlines and stops its motors when one expires. Waiting a little
+# longer here means its own E_TIMEOUT (sent after that stop) is what the brain sees, rather
+# than the brain giving up at the same instant and racing the rover's answer.
+DONE_MARGIN_S = 5.0
 
 
 class RoverError(Exception):
@@ -144,7 +148,7 @@ class RoverLink:
                 await asyncio.wait_for(asyncio.shield(ack), ACK_TIMEOUT_S)
             except TimeoutError:
                 raise RoverError("E_TIMEOUT", f"{op}: no ack within {ACK_TIMEOUT_S} s") from None
-            limit = timeout_s or DONE_TIMEOUT_S.get(op, DEFAULT_DONE_TIMEOUT_S)
+            limit = timeout_s or (DONE_TIMEOUT_S.get(op, DEFAULT_DONE_TIMEOUT_S) + DONE_MARGIN_S)
             try:
                 return await asyncio.wait_for(asyncio.shield(done), limit)
             except TimeoutError:

@@ -200,6 +200,7 @@ class StubRover:
         return {"pose": self.pose().model_dump()}
 
     def _station(self, station_id: str, n_views: int = 8, step_deg: float = 45.0) -> dict:
+        start = self.pose()  # station.json's pose is the start of the spin (doc 00 §6.4)
         keyframes = []
         if self.mapper_url:
             # Absolute mission-frame heading at each capture (doc 00 §6.4).
@@ -231,11 +232,13 @@ class StubRover:
                     }
                 )
                 crops[pid] = f"http://stub-mapper/crops/{pid}.jpg"
+        # Like the Pi: n_views captures, n_views - 1 turns between them, no turn back.
+        self.heading = wrap_deg(self.heading + (n_views - 1) * step_deg)
         return {
             "run_id": self.run_id,
             "station_id": station_id,
             "t": time.time(),
-            "pose": self.pose().model_dump(),
+            "pose": start.model_dump(),
             "keyframes": keyframes,
             "bev": {
                 "file": "bev.png",

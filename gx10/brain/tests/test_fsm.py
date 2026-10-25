@@ -207,6 +207,10 @@ def test_look_only_and_time_up():
             assert g.fsm.state == "DONE"
 
         async with StubRover() as r, Rig(r) as g:
+            # Windows' monotonic clock ticks every 15.6 ms and asyncio runs any timer due
+            # within one tick at once, so the stub's default 0.01 s ops take no time and
+            # the whole survey can fit in one tick. 0.03 s ops make the budget run out.
+            r.op_delay_s = 0.03
             await g.fsm.start_mission({**MISSION, "max_duration_s": 0.01}, IdGen())
             assert not g.db.visits and g.fsm.state == "DONE"
             assert any("time up" in m for _, _, m in g.db.events)
@@ -260,8 +264,13 @@ def test_rover_error_and_vision_down_are_reported():
         async with StubRover() as r, Rig(r) as g:
             r.fail["station"] = "E_CAMERA"
             await g.fsm.start_mission(MISSION, IdGen())
-            assert g.fsm.state == "STOPPED"
+            # A failed station is reported and skipped: the rover still drives the survey
+            # pattern and comes home instead of stopping where the error found it.
+            assert g.fsm.state == "DONE" and r.ops.count("station") == 5
             assert any(lvl == "error" and "E_CAMERA" in m for _, lvl, m in g.db.events)
+            statuses = [t[3] for t in g.db.tasks.values() if t[0] == "station"]
+            assert statuses == ["failed"] * 5
+            assert math.hypot(r.x, r.y) < 0.01 and g.run_ended == ["r_test"]
 
         class DownVision(StubVision):
             async def score(self, run_id, items):
@@ -271,6 +280,41 @@ def test_rover_error_and_vision_down_are_reported():
             await g.fsm.start_mission({**MISSION, "radius_m": 0.5}, IdGen())
             assert g.fsm.state == "DONE" and not g.db.cands and not g.db.visits
             assert any(k == "vision" and lvl == "error" for k, lvl, _ in g.db.events)
+
+    run(go())
+
+
+def test_a_config_fault_on_a_target_sends_the_rover_home():
+    async def go():
+        async with StubRover() as r, Rig(r) as g:
+            r.fail["approach"] = "E_INTERNAL"
+            await g.fsm.start_mission(MISSION, IdGen())
+            assert g.fsm.state == "DONE" and r.ops.count("approach") == 1
+            assert not g.db.visits  # not a rock out of reach: nothing is recorded against it
+            assert math.hypot(r.x, r.y) < 0.01
+
+    run(go())
+
+
+def test_a_failed_approach_is_unreachable_and_the_run_carries_on():
+    async def go():
+        async with StubRover() as r, Rig(r) as g:
+            r.fail["approach"] = "E_TIMEOUT"
+            await g.fsm.start_mission(MISSION, IdGen())
+            assert g.fsm.state == "DONE"
+            assert outcomes(g.db) == ["unreachable"] * 3  # every target tried, none sampled
+            assert r.ops.count("approach") == 3 and "sample" not in r.ops
+            assert math.hypot(r.x, r.y) < 0.01  # came home
+
+    run(go())
+
+
+def test_a_safety_error_still_ends_the_campaign():
+    async def go():
+        async with StubRover() as r, Rig(r) as g:
+            r.fail["station"] = "E_TILT"
+            await g.fsm.start_mission(MISSION, IdGen())
+            assert g.fsm.state == "STOPPED" and r.ops.count("station") == 1
 
     run(go())
 

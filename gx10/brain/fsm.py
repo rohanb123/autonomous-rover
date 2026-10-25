@@ -43,6 +43,15 @@ log = logging.getLogger(__name__)
 
 DRIVE_SPEED, TURN_SPEED = 0.5, 0.5
 ARRIVED_M, ALIGNED_DEG = 0.03, 2.0
+N_VIEWS, STEP_DEG = 8, 45.0  # one station: 8 captures, 45 deg apart
+#: Rover errors that end the campaign. Anything else fails one station or one target, is
+#: reported, and the run carries on, so one bad photo does not strand the rover mid-field.
+FATAL_CODES = frozenset({"E_ESTOP", "E_LINK", "E_TILT"})
+#: A target failing with these is a software or config fault (a device unplugged, a bad
+#: argument), not a rock out of reach: every later target would fail the same way, so the
+#: rover comes home instead of burning its k attempts. Stations are exempt on purpose: an
+#: uncalibrated camera fails every station, and the survey still drives the pattern.
+CONFIG_CODES = frozenset({"E_INTERNAL", "E_BAD_ARGS"})
 
 
 class Link(Protocol):
@@ -145,7 +154,8 @@ class RunFSM:
 
     async def _cmd(self, op: str, args: dict | None = None) -> dict:
         result = await self.link.cmd(op, args)
-        if isinstance(result.get("pose"), dict):
+        # A station's pose is its start pose: _pose_after_station handles that one.
+        if op != "station" and isinstance(result.get("pose"), dict):
             self._pose, self._pose_t = Pose.model_validate(result["pose"]), time.time()
         return result
 
@@ -291,12 +301,47 @@ class RunFSM:
         for (x, y), sid, tid, seq in tasks:
             await self._checkpoint()
             self.db.task(tid, self.run_id, m.mission_id, "station", sid, seq, "active")
-            await self._go_to(x, y)
-            await self._checkpoint()
-            await self._correct_pose(sid)
-            raw = await self._cmd("station", {"station_id": sid, "n_views": 8, "step_deg": 45})
-            await self._ingest_station(StationResult.model_validate(raw))
+            try:
+                await self._go_to(x, y)
+                await self._checkpoint()
+                await self._correct_pose(sid)
+                raw = await self._cmd(
+                    "station", {"station_id": sid, "n_views": N_VIEWS, "step_deg": STEP_DEG}
+                )
+            except RoverError as e:
+                if e.code in FATAL_CODES:
+                    raise
+                await self._halt_and_resync()
+                self.db.event("rover", f"{sid} failed: {e.code} ({e.msg}); next station", "error")
+                note = f"{e.code}: {e.msg}"[:200]
+                self.db.task(tid, self.run_id, m.mission_id, "station", sid, seq, "failed", note)
+                continue
+            st = StationResult.model_validate(raw)
+            self._pose_after_station(st)
+            await self._ingest_station(st)
             self.db.task(tid, self.run_id, m.mission_id, "station", sid, seq, "done")
+
+    async def _halt_and_resync(self) -> None:
+        """After a failed op: make sure the motors are stopped, and take the pose from the
+        stop's reply. The op may have moved the rover part-way, and nothing updated _pose."""
+        try:
+            await self._cmd("stop")
+        except RoverError:
+            self._pose = None  # unknown: fall back to telemetry
+
+    def _pose_after_station(self, st: StationResult) -> None:
+        """`station`'s pose is where the spin STARTED (doc 00 §6.4), not where it ended.
+
+        The spin is in place, so only the heading moved: the last keyframe's absolute
+        heading when there is one, else the commanded spin (n_views - 1 turns, no turn back).
+        Telemetry is not used: it can lag the `done` by a frame.
+        """
+        if st.keyframes:
+            heading = st.keyframes[-1].heading_deg
+        else:
+            heading = wrap_deg(st.pose.heading_deg + (N_VIEWS - 1) * STEP_DEG)
+        self._pose = st.pose.model_copy(update={"heading_deg": heading})
+        self._pose_t = time.time()
 
     async def _correct_pose(self, station_id: str) -> None:
         """Reset dead-reckoning drift from the overhead ArUco pose, if a usable one is fresh."""
@@ -483,6 +528,20 @@ class RunFSM:
             except _ComeBack:  # come_back hit a checkpoint inside the visit
                 self._requeue(target)
                 raise
+            except RoverError as e:
+                if e.code in FATAL_CODES:
+                    raise
+                await self._halt_and_resync()
+                if e.code in CONFIG_CODES:
+                    self.db.event(
+                        "rover", f"{target.cand_id}: {e.code} ({e.msg}); heading home", "error"
+                    )
+                    self._requeue(target)
+                    raise _ComeBack from e
+                self.db.event(
+                    "rover", f"{target.cand_id} failed: {e.code} ({e.msg}); next target", "error"
+                )
+                self._record_visit(target, "unreachable", note=f"{e.code}: {e.msg}"[:200])
             finally:
                 self.active_cand = ""
 
