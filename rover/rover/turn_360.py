@@ -35,8 +35,8 @@ TIMED_DEG_PER_S = 90.0  # only used without the IMU; measure and adjust
 # ---- sonar settings ----
 SONAR_TRIG = 23
 SONAR_ECHO = 24
-SONAR_MAX_DIST_M = 5.0   # HC-SR04 hardware max ~4 m; 5 m just extends the echo timeout
-DETECT_RATIO = 0.75      # flag if live reading < baseline × this (25%+ closer than open space)
+SONAR_MAX_DIST_M = 5.0      # HC-SR04 hardware max ~4 m; 5 m just extends the echo timeout
+DETECT_THRESHOLD_M = 0.50   # stop if sonar reads closer than this (metres)
 
 left = Motor(forward=6, backward=5, enable=12)
 right = Motor(forward=20, backward=21, enable=13)
@@ -103,8 +103,8 @@ def sonar_dist():
     return sonar.distance  # gpiozero updates this in a background thread
 
 
-def object_detected(dist, baseline):
-    return dist is not None and baseline is not None and dist < baseline * DETECT_RATIO
+def object_detected(dist):
+    return dist is not None and dist < DETECT_THRESHOLD_M
 
 
 class Heading:
@@ -137,18 +137,11 @@ class Heading:
 # ---- main -------------------------------------------------------------------
 
 try:
-    baseline_dist = sonar_dist()
-    if baseline_dist is not None:
-        print(f"Baseline distance: {baseline_dist:.3f} m")
+    print(f"Detection threshold: {DETECT_THRESHOLD_M:.2f} m")
 
     if bus:
         h = Heading()
         h.calibrate()  # 2 s; sonar keeps updating during this time
-
-        # Re-read baseline after calibration (rover is still, sonar has had time to settle).
-        baseline_dist = sonar_dist()
-        if baseline_dist is not None:
-            print(f"Baseline (post-cal): {baseline_dist:.3f} m")
 
         start_turn()
         spinning = True
@@ -162,7 +155,7 @@ try:
                 raise RuntimeError("spin timed out; wheels stalled or speed too low")
 
             dist = sonar_dist()
-            if object_detected(dist, baseline_dist):
+            if object_detected(dist):
                 halt()
                 print(f"Object at {dist:.3f} m after {h.deg:.1f}° — stopped.")
                 break
@@ -203,7 +196,7 @@ try:
                 break
 
             dist = sonar_dist()
-            if object_detected(dist, baseline_dist):
+            if object_detected(dist):
                 halt()
                 print(f"Object at {dist:.3f} m after ~{spun_s * TIMED_DEG_PER_S:.0f}° (timed) — stopped.")
                 break
