@@ -10,9 +10,12 @@
 # Timing mirrors docs/00-overview-and-contracts.md section 4. Doc 00 wins.
 
 contract_version: "1.5.0"   # docs/00 section 0. A bump should fail loudly here, not drift
-                            # silently. 1.4.0 is run-scoped DB keys (P4): it changes
-                            # spacetimedb/ and docs/02 only, not schemas.py, so nothing
-                            # on the rover's wire or uploads moved.
+                            # silently -- which is the point of mirroring it at all.
+                            # 1.4.0 run-scoped DB keys: spacetimedb/ and docs/02 only.
+                            # 1.5.0 shortest route ending at home: docs/00 section 8 and
+                            # gx10/brain/planner.py only.
+                            # Neither touched schemas.py, so nothing on the rover's wire
+                            # or its mapper uploads has moved since 1.3.0.
 calibrated_at: null         # ISO-8601 of the last calibrate_*.py run. null = nothing is measured.
 
 pins:                       # BCM numbering. Motor driver is an L293D, not a TB6612.
