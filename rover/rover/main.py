@@ -80,6 +80,7 @@ from rover.servos import (  # noqa: E402
     no_servos,
     servo_pins,
 )
+from rover.station import Station, StationError  # noqa: E402
 from rover.uploader import DEFAULT_MAPPER, Uploader  # noqa: E402
 from rover.ws_server import EventBus, OpError  # noqa: E402
 
@@ -91,7 +92,6 @@ CPU_TEMP_CACHE_S = 1.0
 
 #: Ops whose module is not written yet, and what is missing. Answered with E_INTERNAL.
 UNBUILT: dict[str, str] = {
-    "station": "station needs bev/proposals/local_store/uploader (P2 lands them at I2)",
     "approach": "approach is not implemented yet (P2 I3); not E_LOST_TARGET, nothing was tracked",
     "scoop": "scoop needs camera capture + /ingest/sample upload (P2 I3); nothing was attempted",
     "scoop_pose": "scoop_pose needs rover/rover/scoop.py (P2 I1, not written yet)",
@@ -209,8 +209,11 @@ class HardwareBackend:
         imu: ImuDevice | None = None,
         store: LocalStore | None = None,
         mapper_url: str = DEFAULT_MAPPER,
+        allow_uncalibrated: bool = False,
     ) -> None:
         self.calib = calib
+        # Bench mode: an uncalibrated station uploads keyframes only (station.py).
+        self.allow_uncalibrated = allow_uncalibrated
         self.motors = motors
         self.servos = servos
         self.camera = camera
@@ -418,7 +421,38 @@ class HardwareBackend:
         return {"pose": pose.model_dump(), "method": method}
 
     async def station(self, station_id: str, n_views: int, step_deg: float) -> dict[str, Any]:
-        raise self._refuse("station")
+        if not self.run_id:
+            raise OpError("E_BAD_ARGS", "station before start_run: the bundle needs a run_id")
+        if n_views <= 0:
+            raise OpError("E_BAD_ARGS", f"n_views must be positive, got {n_views}")
+        self._need("station", "camera", self.camera.present, "use --camera sim on a laptop")
+        runner = Station(
+            self.calib,
+            self.camera,
+            self.motion,
+            self.pose,
+            self.safety,
+            store=self.store,
+            uploader=self.uploader,
+            servos=self.servos,
+            ids=self.ids,  # k_ counters continue across the run's stations (doc 00 section 5)
+            emit=self._station_event,
+            allow_uncalibrated=self.allow_uncalibrated,
+        )
+        runner.run_id = self.run_id
+        try:
+            runner.preflight()  # before anything moves: no store, or uncalibrated
+        except StationError as e:
+            log.error("station refused: %s", e)
+            raise OpError("E_INTERNAL", str(e)) from e
+        try:
+            return await self._offload("STATION", runner.run_station, station_id, n_views, step_deg)
+        except CameraError as e:
+            raise OpError("E_CAMERA", str(e)) from e
+
+    def _station_event(self, kind: str, detail: dict[str, Any]) -> None:
+        """station.py's progress -> events.jsonl. Not the WS: Event.kind is a closed set."""
+        self._log_event("info", kind, f"{kind} {detail}", detail)
 
     async def approach(self, cand_id: str, x: float, y: float) -> dict[str, Any]:
         self.last_cand_id = cand_id  # scoop's sample.json needs it (doc 00 section 6.5)
@@ -458,6 +492,11 @@ class HardwareBackend:
             "exposure_locked": self.camera.exposure_locked,
             "focus_locked": self.camera.focus_locked,
             "calibrated": self.calib.calibrated,
+            # Will a `station` work right now, and will it carry geometry when it does?
+            # Logged at start_run, so "no proposals" is explainable after the fact rather
+            # than looking like the arena had no rocks in it.
+            "station": self.store is not None and self.camera.present,
+            "station_geometry": self.calib.calibrated,
         }
 
     def close(self) -> None:
@@ -495,13 +534,16 @@ def build_backend(
     *,
     store_root: str | Path | None = None,
     mapper_url: str = DEFAULT_MAPPER,
+    allow_uncalibrated: bool = False,
 ) -> HardwareBackend:
     motors = make_motors(modes["motors"], calib)
     servos = make_servos(modes["servos"], calib)
     imu = make_imu(modes["imu"], calib)
     camera = make_camera(modes["camera"], calib)
     store = LocalStore(store_root) if store_root is not None else None
-    backend = HardwareBackend(calib, motors, servos, camera, imu, store, mapper_url)
+    backend = HardwareBackend(
+        calib, motors, servos, camera, imu, store, mapper_url, allow_uncalibrated
+    )
     if backend.poller is not None:
         backend.poller.start()
     if backend.uploader is not None:
@@ -567,6 +609,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=env("ROVER_STORE", str(_ROOT / "data" / "rover")),
         help="SD-card bundle store + upload queue (default: <repo>/data/rover, gitignored)",
     )
+    p.add_argument(
+        "--allow-uncalibrated",
+        action="store_true",
+        default=env("ROVER_ALLOW_UNCALIBRATED", "") == "1",
+        help="bench mode: before calibrate_camera.py, a station uploads keyframes only "
+        "(no BEV, no proposals) instead of refusing",
+    )
     p.add_argument("--log-level", default=env("ROVER_LOG_LEVEL", "INFO"))
     return p.parse_args(argv)
 
@@ -591,7 +640,13 @@ def _snapshot_ended(task: asyncio.Task, backend: HardwareBackend) -> None:
 
 async def main_async(args: argparse.Namespace) -> None:
     calib = load_calib(args.calib)
-    backend = build_backend(calib, modes_from(args), store_root=args.store, mapper_url=args.mapper)
+    backend = build_backend(
+        calib,
+        modes_from(args),
+        store_root=args.store,
+        mapper_url=args.mapper,
+        allow_uncalibrated=args.allow_uncalibrated,
+    )
     http: asyncio.Task | None = None
     try:
         async with ws_server.serve_rover(backend, args.host, args.port) as server:

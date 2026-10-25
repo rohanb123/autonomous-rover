@@ -31,6 +31,7 @@ from marsrover_shared.schemas import (  # noqa: E402
     Cmd,
     Done,
     Err,
+    StationResult,
     Telemetry,
     parse_rover_message,
 )
@@ -449,3 +450,63 @@ def test_estop_mid_drive_aborts_with_e_estop_over_the_wire():
             b.close()
 
     asyncio.run(asyncio.wait_for(go(), 40.0))
+
+
+# --- station (wiring only; the survey itself is test_station.py) ---------------------------
+
+
+def station_backend(tmp_path, monkeypatch, *, allow: bool, camera: str = "sim"):
+    monkeypatch.setenv("MARSROVER_DATA_DIR", str(tmp_path / "data"))  # events.jsonl
+    return rover_main.build_backend(
+        CALIB,
+        {**ALL_OFF, "motors": "sim", "camera": camera},
+        store_root=tmp_path / "store",
+        mapper_url="http://127.0.0.1:1",  # nothing listens: the upload fails fast
+        allow_uncalibrated=allow,
+    )
+
+
+def test_station_before_start_run_is_bad_args(tmp_path, monkeypatch):
+    b = station_backend(tmp_path, monkeypatch, allow=True)
+    try:
+        with pytest.raises(rover_main.OpError) as e:
+            asyncio.run(b.station("s_0001", 1, 45.0))
+        assert e.value.code == "E_BAD_ARGS" and "start_run" in e.value.msg
+    finally:
+        b.close()
+
+
+@pytest.mark.parametrize(
+    ("allow", "camera", "needle"),
+    [(True, "off", "camera"), (False, "sim", "calibrated_at")],
+)
+def test_station_refusals_are_e_internal_before_anything_moves(
+    tmp_path, monkeypatch, allow, camera, needle
+):
+    b = station_backend(tmp_path, monkeypatch, allow=allow, camera=camera)
+    try:
+        b.start_run("r_20261024_120000")
+        with pytest.raises(rover_main.OpError) as e:
+            asyncio.run(b.station("s_0001", 1, 45.0))
+        assert e.value.code == "E_INTERNAL" and needle in e.value.msg
+        assert b.state == "IDLE"
+    finally:
+        b.close()
+
+
+def test_one_picture_station_stores_it_and_survives_a_dead_mapper(tmp_path, monkeypatch):
+    """The bench path: uncalibrated, 1 view, mapper down -> done, keyframe on the SD card."""
+    b = station_backend(tmp_path, monkeypatch, allow=True)
+    try:
+        b.start_run("r_20261024_120000")
+        result = asyncio.run(b.station("s_0001", 1, 45.0))
+        parsed = StationResult.model_validate(result)
+        assert [k.file for k in parsed.keyframes] == ["kf_000.jpg"]
+        assert parsed.keyframes[0].kf_id == "k_0001"
+        assert parsed.proposals == [] and parsed.mapper.ok is False
+        folder = tmp_path / "store" / "r_20261024_120000" / "stations" / "s_0001"
+        assert sorted(p.name for p in folder.iterdir()) == ["kf_000.jpg", "station.json"]
+        assert b.telemetry().uplink_backlog == 1
+        assert b.state == "IDLE"
+    finally:
+        b.close()
