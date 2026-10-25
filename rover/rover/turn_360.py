@@ -49,21 +49,25 @@ except Exception as e:
     bus = None
     print(f"IMU not available ({e}); using timed turns instead.")
 
-# ---- camera ----
-cam = None
-try:
-    from picamera2 import Picamera2
-    cam = Picamera2()
-    cam.configure(cam.create_video_configuration(main={"size": (640, 480), "format": "RGB888"}))
-    cam.start()
-    time.sleep(1.0)  # let auto-exposure settle before the first capture
-    print("Camera ready.")
-except Exception as e:
-    cam = None
-    print(f"Camera not available ({e}); skipping captures.")
-
-
 os.makedirs("img", exist_ok=True)
+
+# cam is initialised after gyro calibration so the pipeline never sits idle long
+# enough to hit libcamera's 1-second dequeue timer before the first capture.
+cam = None
+
+
+def start_camera():
+    global cam
+    try:
+        from picamera2 import Picamera2
+        cam = Picamera2()
+        cam.configure(cam.create_video_configuration(main={"size": (640, 480), "format": "RGB888"}))
+        cam.start()
+        time.sleep(0.5)  # brief settle; full second not needed after gyro cal
+        print("Camera ready.")
+    except Exception as e:
+        cam = None
+        print(f"Camera not available ({e}); skipping captures.")
 
 
 def capture(step_num):
@@ -144,6 +148,7 @@ try:
     if bus:
         h = Heading()
         h.calibrate()
+        start_camera()
         for k in range(1, steps + 1):
             target = k * STEP_DEG  # cumulative target, so small errors don't add up
             start_turn()
@@ -160,6 +165,7 @@ try:
             capture(k)
             print(f"step {k}/{steps}: target {target:5.0f}, measured {h.deg:6.1f} deg")
     else:
+        start_camera()
         step_time = STEP_DEG / TIMED_DEG_PER_S
         for k in range(1, steps + 1):
             start_turn()
