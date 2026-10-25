@@ -88,7 +88,8 @@ from marsrover_shared.schemas import (  # noqa: E402
     StationUrls,
     Telemetry,
 )
-from rover import ws_server  # noqa: E402
+from rover import uploader, ws_server  # noqa: E402
+from rover.uploader import multipart  # noqa: E402  (the Pi's wire format, not a copy)
 from rover.ws_server import EventBus, OpError  # noqa: E402
 
 log = logging.getLogger("fake_rover")
@@ -125,8 +126,9 @@ SCOOP_PUSH_M = 0.04  # the slow nudge in DEPLOY (P2 role doc 4, sequence_pick)
 SCOOP_STANDOFF_M = 0.10  # where `approach` parks: target this far ahead of the rover centre
 SCOOP_ZONE_TOL_M = 0.05
 APPROACH_SPEED = 0.4
-UPLOAD_TIMEOUT_S = 10.0
-RETRY_MIN_S, RETRY_MAX_S = 1.0, 30.0  # exponential backoff, capped (P2 role doc 4, uploader)
+# Same objects as the real Pi's uploader, like the ws_server constants above.
+UPLOAD_TIMEOUT_S = uploader.UPLOAD_TIMEOUT_S
+RETRY_MIN_S, RETRY_MAX_S = uploader.RETRY_MIN_S, uploader.RETRY_MAX_S
 
 HOME_POSE = Pose(x=0.0, y=0.0, heading_deg=0.0, source="dr+gyro", sigma_xy_m=0.01)
 # UNVERIFIED: plausible servo microseconds per named pose. The real values come from
@@ -734,14 +736,14 @@ class Sim:
     async def _post_station(
         self, station: StationJson, files: dict[str, bytes]
     ) -> MapperStationReply:
-        parts = _multipart("station.json", station.model_dump_json(), files)
+        parts = multipart("station.json", station.model_dump_json(), files)
         async with httpx.AsyncClient(timeout=UPLOAD_TIMEOUT_S) as client:
             r = await client.post(f"{self.opts.mapper}/ingest/station", files=parts)
             r.raise_for_status()
             return MapperStationReply.model_validate_json(r.content)
 
     async def _post_sample(self, sample: SampleJson, jpg: bytes) -> SampleReply:
-        parts = _multipart("sample.json", sample.model_dump_json(), {"present.jpg": jpg})
+        parts = multipart("sample.json", sample.model_dump_json(), {"present.jpg": jpg})
         async with httpx.AsyncClient(timeout=UPLOAD_TIMEOUT_S) as client:
             r = await client.post(f"{self.opts.mapper}/ingest/sample", files=parts)
             r.raise_for_status()
@@ -769,15 +771,6 @@ class Sim:
                 continue
             self.st.retry_queue.pop(0)
             backoff = RETRY_MIN_S
-
-
-def _multipart(meta_name: str, meta_json: str, files: dict[str, bytes]) -> list[tuple]:
-    """Doc 00 6.4-6.5: one part per file, each part named after the file itself."""
-    parts: list[tuple] = [(meta_name, (meta_name, meta_json.encode(), "application/json"))]
-    for name, data in sorted(files.items()):
-        kind = "image/png" if name.endswith(".png") else "image/jpeg"
-        parts.append((name, (name, data, kind)))
-    return parts
 
 
 # --- server --------------------------------------------------------------------------------

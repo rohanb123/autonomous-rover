@@ -205,9 +205,42 @@ def test_telemetry_validates_and_reports_no_imu_as_zeros():
         assert (t.imu.ax, t.imu.ay, t.imu.az, t.imu.gz_dps) == (0.0, 0.0, 0.0, 0.0)
         assert t.state == "IDLE" and t.estop is False
         assert t.scoop.us == [1500, 1500]  # calib's STOW until servos.py is driving
-        assert t.uplink_backlog == 0  # no upload queue until uploader.py lands at I2
+        assert t.uplink_backlog == 0  # no store passed, so no upload queue
     finally:
         b.close()
+
+
+def test_snapshot_answers_the_doc00_url_only_when_it_can_be_served():
+    no_cam = backend()
+    unserved = backend(camera="sim")
+    served = backend(camera="sim")
+    served.snapshot_served = True
+    try:
+        for b, needle in ((no_cam, "camera"), (unserved, "--snapshot-port 0")):
+            with pytest.raises(rover_main.OpError) as e:
+                b.snapshot()
+            assert e.value.code == "E_INTERNAL" and needle in e.value.msg
+        assert served.snapshot() == {"url": "http://192.168.50.20:8080/snapshot.jpg"}
+    finally:
+        for b in (no_cam, unserved, served):
+            b.close()
+
+
+def test_telemetry_reports_the_upload_backlog_from_the_sd_card(tmp_path):
+    """A bundle saved while the mapper is unreachable shows up as uplink_backlog."""
+    from test_local_store import FILES, station
+
+    # Port 1: nothing listens there, so the retry thread's attempts fail fast.
+    b = rover_main.build_backend(
+        CALIB, ALL_OFF, store_root=tmp_path, mapper_url="http://127.0.0.1:1"
+    )
+    try:
+        assert b.uploader is not None and b.telemetry().uplink_backlog == 0
+        b.store.save_station(station(), FILES)
+        assert b.telemetry().uplink_backlog == 1
+    finally:
+        b.close()
+    assert b.uploader._thread is None  # close() stopped the retry thread
 
 
 def test_start_run_rezeroes_the_pose():

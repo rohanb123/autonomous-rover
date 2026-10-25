@@ -54,11 +54,12 @@ from marsrover_shared.schemas import (  # noqa: E402
     ScoopState,
     Telemetry,
 )
-from rover import ws_server  # noqa: E402
+from rover import snapshot_server, ws_server  # noqa: E402
 from rover.camera import Camera, CameraError, NullSource, SyntheticSource  # noqa: E402
 from rover.config import Calib, CalibError, load_calib  # noqa: E402
 from rover.imu import Imu as ImuDevice  # noqa: E402
 from rover.imu import ImuPoller  # noqa: E402
+from rover.local_store import LocalStore  # noqa: E402
 from rover.motion import Aborted, Motion  # noqa: E402
 from rover.motors import (  # noqa: E402
     GpioZeroPins,
@@ -79,6 +80,7 @@ from rover.servos import (  # noqa: E402
     no_servos,
     servo_pins,
 )
+from rover.uploader import DEFAULT_MAPPER, Uploader  # noqa: E402
 from rover.ws_server import EventBus, OpError  # noqa: E402
 
 log = logging.getLogger("rover")
@@ -92,7 +94,6 @@ UNBUILT: dict[str, str] = {
     "station": "station needs bev/proposals/local_store/uploader (P2 lands them at I2)",
     "approach": "approach is not implemented yet (P2 I3); not E_LOST_TARGET, nothing was tracked",
     "scoop": "scoop needs camera capture + /ingest/sample upload (P2 I3); nothing was attempted",
-    "snapshot": "the :8080 snapshot server is not up yet (P2 I2)",
     "scoop_pose": "scoop_pose needs rover/rover/scoop.py (P2 I1, not written yet)",
     "dump": "dump needs rover/rover/scoop.py (P2 I1, not written yet)",
 }
@@ -206,6 +207,8 @@ class HardwareBackend:
         servos: ServoDriver,
         camera: Camera,
         imu: ImuDevice | None = None,
+        store: LocalStore | None = None,
+        mapper_url: str = DEFAULT_MAPPER,
     ) -> None:
         self.calib = calib
         self.motors = motors
@@ -237,6 +240,11 @@ class HardwareBackend:
         )
         self.motion = Motion(motors, self.pose, calib, imu=imu, safety=self.safety)
         self._pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="rover-op")
+        # No store = no uploads (tests, mostly). With one, bundles queue on the SD card and
+        # a failed upload becomes an `upload_retry` event plus a retry from its own thread.
+        self.store = store
+        self.uploader = Uploader(store, mapper_url, self.bus.emit) if store is not None else None
+        self.snapshot_served = False  # main_async flips it once :8080 is being served
 
     # --- observable state ----------------------------------------------------------------
 
@@ -305,7 +313,8 @@ class HardwareBackend:
             scoop=ScoopState(pose="STOW", us=us),
             cpu_temp_c=self._cpu_temp_c(),
             queue_len=1 if self._state not in ("IDLE", "ESTOP") else 0,
-            uplink_backlog=0,  # no upload queue until uploader.py lands at I2
+            # A COUNT over a few dozen index rows: well under a millisecond on the loop.
+            uplink_backlog=self.uploader.backlog if self.uploader is not None else 0,
         )
 
     # --- events --------------------------------------------------------------------------
@@ -374,7 +383,13 @@ class HardwareBackend:
         return {"latched": False}
 
     def snapshot(self) -> dict[str, Any]:
-        raise self._refuse("snapshot")
+        """The URL only (doc 00 section 6.2); the brain or dashboard fetches the image itself."""
+        self._need("snapshot", "camera", self.camera.present, "use --camera sim on a laptop")
+        if not self.snapshot_served:
+            msg = "snapshot needs the :8080 server, which is disabled (--snapshot-port 0)"
+            log.error("%s", msg)
+            raise OpError("E_INTERNAL", msg)
+        return {"url": ws_server.SNAPSHOT_URL}
 
     # --- long ops ------------------------------------------------------------------------
 
@@ -462,20 +477,38 @@ class HardwareBackend:
         if self.imu is not None:
             with contextlib.suppress(Exception):
                 self.imu.close()
+        if self.uploader is not None:
+            with contextlib.suppress(Exception):
+                self.uploader.stop()
+        if self.store is not None:
+            with contextlib.suppress(Exception):
+                self.store.close()
         self._pool.shutdown(wait=False, cancel_futures=True)
 
 
 # --- wiring --------------------------------------------------------------------------------
 
 
-def build_backend(calib: Calib, modes: dict[str, str]) -> HardwareBackend:
+def build_backend(
+    calib: Calib,
+    modes: dict[str, str],
+    *,
+    store_root: str | Path | None = None,
+    mapper_url: str = DEFAULT_MAPPER,
+) -> HardwareBackend:
     motors = make_motors(modes["motors"], calib)
     servos = make_servos(modes["servos"], calib)
     imu = make_imu(modes["imu"], calib)
     camera = make_camera(modes["camera"], calib)
-    backend = HardwareBackend(calib, motors, servos, camera, imu)
+    store = LocalStore(store_root) if store_root is not None else None
+    backend = HardwareBackend(calib, motors, servos, camera, imu, store, mapper_url)
     if backend.poller is not None:
         backend.poller.start()
+    if backend.uploader is not None:
+        # Starts draining whatever an earlier boot left unsent, before any new station.
+        backend.uploader.start()
+        pending = backend.uploader.backlog
+        log.info("uploads -> %s; %d pending in %s", mapper_url, pending, store_root)
     log.info("inventory: %s", backend.inventory())
     if not calib.calibrated:
         log.warning(
@@ -518,6 +551,22 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="picamera2 = the CSI Camera Module 3; opencv = a USB camera",
     )
     p.add_argument("--no-hw", action="store_true", help="shorthand for every device off")
+    p.add_argument(
+        "--mapper",
+        default=env("ROVER_MAPPER", DEFAULT_MAPPER),
+        help=f"mapper base URL for /ingest/* (default {DEFAULT_MAPPER})",
+    )
+    p.add_argument(
+        "--snapshot-port",
+        type=int,
+        default=int(env("ROVER_SNAPSHOT_PORT", str(snapshot_server.PORT))),
+        help="HTTP /snapshot.jpg + /stream.mjpg (doc 00 section 3: 8080); 0 disables",
+    )
+    p.add_argument(
+        "--store",
+        default=env("ROVER_STORE", str(_ROOT / "data" / "rover")),
+        help="SD-card bundle store + upload queue (default: <repo>/data/rover, gitignored)",
+    )
     p.add_argument("--log-level", default=env("ROVER_LOG_LEVEL", "INFO"))
     return p.parse_args(argv)
 
@@ -533,15 +582,35 @@ def modes_from(args: argparse.Namespace) -> dict[str, str]:
     }
 
 
+def _snapshot_ended(task: asyncio.Task, backend: HardwareBackend) -> None:
+    """:8080 is debug-only: if it dies (port taken, say), log it and keep the rover running."""
+    backend.snapshot_served = False
+    if not task.cancelled() and task.exception() is not None:
+        log.error("snapshot server stopped: %s", task.exception())
+
+
 async def main_async(args: argparse.Namespace) -> None:
     calib = load_calib(args.calib)
-    backend = build_backend(calib, modes_from(args))
+    backend = build_backend(calib, modes_from(args), store_root=args.store, mapper_url=args.mapper)
+    http: asyncio.Task | None = None
     try:
         async with ws_server.serve_rover(backend, args.host, args.port) as server:
             port = server.sockets[0].getsockname()[1] if server.sockets else args.port
             log.info("rover runtime on ws://%s:%d%s", args.host, port, ws_server.PATH)
+            if args.snapshot_port:
+                http = asyncio.create_task(
+                    snapshot_server.serve(backend.camera, args.host, args.snapshot_port),
+                    name="snapshot-http",
+                )
+                backend.snapshot_served = True
+                http.add_done_callback(lambda t: _snapshot_ended(t, backend))
+                log.info("snapshot/stream on http://%s:%d", args.host, args.snapshot_port)
             await asyncio.get_running_loop().create_future()  # serve until cancelled
     finally:
+        if http is not None:
+            http.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await http
         backend.close()
 
 
