@@ -39,6 +39,11 @@ Grover takes the same idea a few steps further, at hackathon scale:
 - 🗄️ **SpacetimeDB as the system of record** (sponsor track). It has a TypeScript module, and the dashboard is driven by subscriptions. Python services write through the documented HTTP reducer API ([docs/02](docs/02-spacetimedb.md)).
 - 🪐 **Real space data** (SpaceXSI track): AI4Mars, the MSL Curiosity labeled set, the ChemCam master observation list (including AEGIS-selected targets), and the JPL raw-image feeds.
 
+## Rover & Dashboard
+![Rover](assets/grover_rover.jpeg)
+![Dashboard](assets/grover_dashboard.png)
+
+
 ## Architecture
 
 ```mermaid
