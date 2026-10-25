@@ -23,7 +23,7 @@ Env: `VITE_STDB_URI=ws://192.168.50.10:3000`, `VITE_STDB_DB=marsrover`, `VITE_BR
 ## 3. Layout (wireframe)
 ```
 ┌──────────────────────────────────────────────────────────────────────────────────────────────┐
-│ TopBar: ARES SCOUT │ RunPicker ▼ │ [LIVE|REPLAY] │ ConnectionBadge ●STDB ●Brain ●Rover │ E-STOP ■ │
+│ TopBar: GROVER │ RunPicker ▼ │ [LIVE|REPLAY] │ ConnectionBadge ●STDB ●Brain ●Rover │ E-STOP ■ │
 ├──────────────────────────────────────────────┬───────────────────────────────────────────────┤
 │                                              │ MissionPanel                                  │
 │                                              │  "Survey 1.5 m, top 3 rocks…"  radius 1.5     │

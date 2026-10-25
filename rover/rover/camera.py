@@ -59,6 +59,14 @@ CSI_FORMAT = "RGB888"
 # libcamera AfMode values, as a fallback when `from libcamera import controls` is unavailable.
 AF_MODES = {"Manual": 0, "Auto": 1, "Continuous": 2}
 
+
+def rotate_180(frame: Any) -> Any:
+    """Turn a frame (H x W or H x W x C) upside down. A copy, so encoders get a contiguous array."""
+    import numpy as np
+
+    return np.ascontiguousarray(frame[::-1, ::-1])
+
+
 # picamera2 requires the lores stream to be YUV420 -- it is the ISP's hardware-downscaled
 # output, and it will refuse any other format.
 LORES_FORMAT = "YUV420"
@@ -196,6 +204,9 @@ class Picamera2Source:
         self.applied: dict[str, Any] = {}
         self.lores = lores_size(cfg)
         self.streaming = False
+        # rotate_180: done by the ISP when libcamera's Transform is available (so the hardware
+        # MJPEG stream is upright too); otherwise read() and read_lores() turn each frame.
+        self._sw_rotate = False
         self._cam = picam2 if picam2 is not None else self._construct()
         self._start()
 
@@ -225,10 +236,15 @@ class Picamera2Source:
             # `lores` is the ISP's hardware downscale, for :8080. Without `lores` here, a
             # snapshot server would have to either open a second camera (which fails) or
             # steal frames from `main` and stutter every station grab.
-            config = self._cam.create_video_configuration(
-                main={"size": (cfg.width, cfg.height), "format": CSI_FORMAT},
-                lores={"size": self.lores, "format": LORES_FORMAT},
-            )
+            streams: dict[str, Any] = {
+                "main": {"size": (cfg.width, cfg.height), "format": CSI_FORMAT},
+                "lores": {"size": self.lores, "format": LORES_FORMAT},
+            }
+            transform = self._transform() if cfg.rotate_180 else None
+            if transform is not None:
+                streams["transform"] = transform
+            self._sw_rotate = cfg.rotate_180 and transform is None
+            config = self._cam.create_video_configuration(**streams)
             self._cam.configure(config)
             self._cam.start()
         except Exception as e:
@@ -244,6 +260,15 @@ class Picamera2Source:
             LORES_FORMAT,
         )
 
+    @staticmethod
+    def _transform() -> Any:
+        """libcamera's 180 deg transform (hflip + vflip), or None to rotate in software."""
+        try:
+            from libcamera import Transform
+        except ImportError:
+            return None
+        return Transform(hflip=1, vflip=1)
+
     # --- capture --------------------------------------------------------------------------
 
     def read(self) -> tuple[bool, Any]:
@@ -252,7 +277,9 @@ class Picamera2Source:
         except Exception as e:
             log.warning("CSI capture failed: %s", e)
             return False, None
-        return frame is not None, frame
+        if frame is None:
+            return False, None
+        return True, rotate_180(frame) if self._sw_rotate else frame
 
     def read_lores(self) -> tuple[bool, Any]:
         """The small stream as BGR. It arrives as planar YUV420, so convert it here."""
@@ -271,7 +298,8 @@ class Picamera2Source:
         if code is None:  # older OpenCV spells it differently
             code = cv2.COLOR_YUV2BGR_I420
         try:
-            return True, cv2.cvtColor(yuv, code)
+            bgr = cv2.cvtColor(yuv, code)
+            return True, rotate_180(bgr) if self._sw_rotate else bgr
         except Exception as e:
             log.warning("lores YUV420 -> BGR failed: %s", e)
             return False, None
@@ -458,7 +486,10 @@ class OpenCvSource:
         return cap
 
     def read(self) -> tuple[bool, Any]:
-        return self._cap.read()
+        ok, frame = self._cap.read()
+        if ok and frame is not None and self.cfg.rotate_180:
+            frame = rotate_180(frame)
+        return ok, frame
 
     def lock_exposure(self, cfg: CameraCfg) -> tuple[bool, bool]:
         """V4L2 lets a driver accept a property write and ignore it, so read it back."""

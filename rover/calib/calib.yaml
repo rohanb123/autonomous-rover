@@ -98,6 +98,8 @@ camera:
   present_focus_m: 0.15     # PRESENT close-up; CM3 focuses to ~0.1 m (docs/05 U-7)
   lores_width: 320          # second CSI stream for :8080 /stream.mjpg (debug only).
                             # Height follows main's aspect; see rover/rover/camera.py.
+  rotate_180: true          # the nav camera is mounted upside down; frames are turned upright
+                            # before anything sees them (keyframes, close-ups, :8080, BEV)
 
 
 

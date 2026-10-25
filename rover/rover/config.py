@@ -89,6 +89,7 @@ class CameraCfg:
     focus_m: float = 0.8  # survey: ground 0.3-1.5 m out
     present_focus_m: float = 0.15  # the close-up `sample` photo (docs/05 U-7)
     lores_width: int = 320  # second CSI stream, for :8080. Height follows main's aspect
+    rotate_180: bool = False  # camera mounted upside down: every frame is turned 180 deg
 
 
 @dataclass(frozen=True)
