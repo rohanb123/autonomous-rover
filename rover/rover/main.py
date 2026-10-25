@@ -57,6 +57,8 @@ from marsrover_shared.schemas import (  # noqa: E402
 from rover import ws_server  # noqa: E402
 from rover.camera import Camera, CameraError, NullSource, SyntheticSource  # noqa: E402
 from rover.config import Calib, CalibError, load_calib  # noqa: E402
+from rover.imu import Imu as ImuDevice  # noqa: E402
+from rover.imu import ImuPoller  # noqa: E402
 from rover.motion import Aborted, Motion  # noqa: E402
 from rover.motors import (  # noqa: E402
     GpioZeroPins,
@@ -141,16 +143,31 @@ def make_servos(mode: str, calib: Calib) -> ServoDriver:
         return no_servos(cfg)
 
 
-def make_imu(mode: str, calib: Calib) -> None:
-    """Placeholder: rover/rover/imu.py is not written yet.
+def make_imu(mode: str, calib: Calib) -> ImuDevice | None:
+    """Probe the I2C bus for an MPU-6050, else an ADXL345, else nothing.
 
-    With no IMU, `Motion.turn` takes its timed branch (which is exactly the docs/05 U-2
-    fallback worth exercising) and the tilt cutoff is disabled rather than faked.
+    A gyro is what lets `Motion.turn` close the loop instead of trusting a timing table,
+    which is docs/05 U-2 and the mitigation for R2. With no gyro, turns stay timed and the
+    tilt cutoff is disabled rather than faked.
     """
-    if mode not in ("auto", "off"):
-        raise SystemExit(f"--imu {mode} needs rover/rover/imu.py, which is not written yet")
-    log.warning("no IMU: turns will be timed and the tilt cutoff is disabled (docs/05 U-2)")
-    return None
+    if mode == "off":
+        log.warning("--imu off: turns stay timed and the tilt cutoff is disabled")
+        return None
+    wanted = {"mpu6050": (0x68,), "adxl345": (0x53,)}.get(mode, calib.i2c.imu_addrs)
+    try:
+        bus = Smbus2Bus(calib.i2c.bus)
+    except ServosUnavailable as e:  # same I2cBus, so the same "no bus" error
+        if mode != "auto":
+            raise SystemExit(f"--imu {mode}: {e}") from e
+        log.warning("imu: no I2C bus (%s); turns stay timed, tilt cutoff off", e)
+        return None
+    imu = ImuDevice(bus, tuple(wanted))
+    if not imu.present:
+        if mode != "auto":
+            raise SystemExit(f"--imu {mode}: nothing at {[hex(a) for a in wanted]}")
+        imu.close()
+        return None
+    return imu
 
 
 def make_camera(mode: str, calib: Calib) -> Camera:
@@ -188,7 +205,7 @@ class HardwareBackend:
         motors: Motors,
         servos: ServoDriver,
         camera: Camera,
-        imu: Any | None = None,
+        imu: ImuDevice | None = None,
     ) -> None:
         self.calib = calib
         self.motors = motors
@@ -206,10 +223,13 @@ class HardwareBackend:
         self.bus = EventBus()
         self.pose = PoseEstimator(calib.pose)
         self.pose.use_gyro(bool(imu is not None and imu.has_gyro()))
+        # The poller is what the loop thread reads; Motion keeps the live device, since
+        # it runs on the worker thread and a gyro turn wants the freshest sample.
+        self.poller = ImuPoller(imu) if imu is not None else None
         self.safety = Safety(
             motors,
             moving=lambda: self._state in ws_server.MOVING_STATES,
-            imu_read=(imu.read if imu is not None else None),
+            imu_read=(self.poller.cached if self.poller is not None else None),
             on_event=self.bus.emit,
             heartbeat_timeout_s=calib.safety.heartbeat_timeout_s,
             tilt_limit_deg=calib.safety.tilt_limit_deg,
@@ -247,6 +267,16 @@ class HardwareBackend:
         return value
 
     def _imu_reading(self) -> Imu:
+        """From the poller cache: this runs on the event loop, which must not block."""
+        if self.poller is not None:
+            cached = self.poller.cached()
+            if cached is not None:
+                return Imu(
+                    ax=float(cached.get("ax", 0.0)),
+                    ay=float(cached.get("ay", 0.0)),
+                    az=float(cached.get("az", 0.0)),
+                    gz_dps=float(cached.get("gz_dps", 0.0)),
+                )
         if self.imu is None:
             # All zeros, not a fabricated 9.79: a reader can tell there is no accelerometer.
             return Imu(ax=0.0, ay=0.0, az=0.0, gz_dps=0.0)
@@ -307,6 +337,11 @@ class HardwareBackend:
         self.run_id = run_id
         self.ids = IdGen()  # k_/p_ counters are per run (doc 00 section 5)
         self.pose.set_pose(Pose(x=0.0, y=0.0, heading_deg=0.0, source="dr"))
+        if self.imu is not None and self.imu.has_gyro():
+            # The rover is stationary at the start of a run, which is the only time this
+            # is measurable. A degree per second of bias is 4 degrees over a station spin.
+            bias = self.imu.gyro_bias_calibrate()
+            self._log_event("info", "gyro_bias", f"gyro bias {bias:.3f} deg/s", {"dps": bias})
         self._log_event("info", "hw_inventory", "rover runtime up", self.inventory())
         log.info("run %s started; %s", run_id, self.inventory())
         return {"ok": True}
@@ -402,7 +437,8 @@ class HardwareBackend:
         return {
             "motors": self.motors.present,
             "servos": getattr(self.servos, "name", "?") if self.servos.present else False,
-            "imu": self.imu is not None,
+            "imu": self.imu.detect() if self.imu is not None else False,
+            "gyro": self.imu.has_gyro() if self.imu is not None else False,
             "camera": self.camera.backend if self.camera.present else False,
             "exposure_locked": self.camera.exposure_locked,
             "focus_locked": self.camera.focus_locked,
@@ -412,6 +448,9 @@ class HardwareBackend:
     def close(self) -> None:
         """Leave the hardware safe: brake, standby, release the servos, drop the pool."""
         log.info("shutting down")
+        if self.poller is not None:
+            with contextlib.suppress(Exception):
+                self.poller.stop()
         with contextlib.suppress(Exception):
             self.motion.request_stop()
         with contextlib.suppress(Exception):
@@ -420,6 +459,9 @@ class HardwareBackend:
             self.servos.close()
         with contextlib.suppress(Exception):
             self.camera.close()
+        if self.imu is not None:
+            with contextlib.suppress(Exception):
+                self.imu.close()
         self._pool.shutdown(wait=False, cancel_futures=True)
 
 
@@ -432,6 +474,8 @@ def build_backend(calib: Calib, modes: dict[str, str]) -> HardwareBackend:
     imu = make_imu(modes["imu"], calib)
     camera = make_camera(modes["camera"], calib)
     backend = HardwareBackend(calib, motors, servos, camera, imu)
+    if backend.poller is not None:
+        backend.poller.start()
     log.info("inventory: %s", backend.inventory())
     if not calib.calibrated:
         log.warning(
@@ -463,9 +507,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     p.add_argument(
         "--imu",
-        choices=("auto", "off"),
+        choices=("auto", "mpu6050", "adxl345", "off"),
         default=env("ROVER_IMU", "auto"),
-        help="rover/rover/imu.py is not written yet, so both mean off",
+        help="auto probes 0x68 then 0x53; a named chip fails loudly if absent",
     )
     p.add_argument(
         "--camera",

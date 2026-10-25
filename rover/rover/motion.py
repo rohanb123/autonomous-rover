@@ -37,6 +37,12 @@ log = logging.getLogger("rover.motion")
 GYRO_TURN_SLACK = 2.5
 GYRO_TURN_FLOOR_S = 1.0
 
+#: Both loops below terminate on elapsed time, so a clock that never advances would spin
+#: forever. time.monotonic always advances, so this cannot happen on the rover -- but an
+#: injected clock paired with the wrong sleep hangs a test with no diagnostic at all, which
+#: is a nasty half-hour. Unreachable with any real clock; instant with a frozen one.
+STUCK_CLOCK_TICKS = 10_000
+
 
 class Aborted(RuntimeError):
     """Motion was cut short by a latch or a stop request; carries the contract error code."""
@@ -45,6 +51,13 @@ class Aborted(RuntimeError):
         super().__init__(f"{code}: {msg}" if msg else code)
         self.code: ErrCode = code
         self.msg = msg
+
+
+def _stuck_clock_msg() -> str:
+    return (
+        f"clock did not advance over {STUCK_CLOCK_TICKS} ticks: an injected clock and sleep "
+        "that disagree (pass clock.sleep, not a no-op) would do this"
+    )
 
 
 class ImuLike(Protocol):
@@ -110,9 +123,11 @@ class Motion:
         """Drive at `speed_pair` for `total_s`. Returns (elapsed, abort code or None)."""
         self.motors.set(*speed_pair)
         t0 = self.clock()
+        stuck = 0
         try:
             while True:
-                elapsed = self.clock() - t0
+                now = self.clock()
+                elapsed = now - t0
                 if elapsed >= total_s:
                     return total_s, None
                 code = self._cut()
@@ -121,6 +136,9 @@ class Motion:
                 if self._stop.is_set():
                     return elapsed, None
                 self.sleep(min(self._tick, total_s - elapsed))
+                stuck = 0 if self.clock() > now else stuck + 1
+                if stuck > STUCK_CLOCK_TICKS:
+                    raise Aborted("E_INTERNAL", _stuck_clock_msg())
         finally:
             self.motors.stop()
 
@@ -194,6 +212,7 @@ class Motion:
         swept = 0.0
         t0 = last = self.clock()
         code: ErrCode | None = None
+        stuck = 0
         try:
             while True:
                 now = self.clock()
@@ -208,6 +227,9 @@ class Motion:
                 if code is not None or self._stop.is_set():
                     break
                 self.sleep(self._tick)
+                stuck = 0 if self.clock() > now else stuck + 1
+                if stuck > STUCK_CLOCK_TICKS:
+                    raise Aborted("E_INTERNAL", _stuck_clock_msg())
         finally:
             self.motors.stop()
         turned = sign * min(swept, abs(deg))

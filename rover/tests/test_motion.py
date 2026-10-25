@@ -365,3 +365,41 @@ def test_a_zero_speed_table_is_an_internal_error_not_a_hang():
     with pytest.raises(Aborted) as exc:
         motion.drive(1.0, 0.5)
     assert exc.value.code == "E_INTERNAL"
+
+
+def test_a_frozen_clock_fails_fast_instead_of_hanging_forever():
+    """Both loops end on elapsed time, so a clock that never advances would spin forever.
+
+    time.monotonic always advances, so this cannot happen on the rover. It can happen in a
+    test that injects a clock but forgets to pass its sleep -- and an infinite hang with no
+    message is a genuinely expensive way to learn that.
+    """
+    clock = helpers.FakeClock()
+    pins = RecordingPins()
+    motion = Motion(
+        Motors(CALIB.pins, 0.0, pins),
+        PoseEstimator(CALIB.pose),
+        CALIB,
+        clock=clock,
+        sleep=lambda _dt: None,  # the mistake: the clock never moves
+    )
+    with pytest.raises(Aborted) as exc:
+        motion.drive(1.0, 0.5)
+    assert exc.value.code == "E_INTERNAL"
+    assert "clock did not advance" in exc.value.msg
+    assert pins.last("pwm", PINS.en1) == 0.0, "and it still leaves the motors stopped"
+
+
+def test_the_gyro_turn_also_fails_fast_on_a_frozen_clock():
+    clock = helpers.FakeClock()
+    motion = Motion(
+        Motors(CALIB.pins, 0.0, RecordingPins()),
+        PoseEstimator(CALIB.pose),
+        CALIB,
+        imu=FakeImu(gz_dps=0.0),
+        clock=clock,
+        sleep=lambda _dt: None,
+    )
+    with pytest.raises(Aborted) as exc:
+        motion.turn(90.0, 0.5)
+    assert exc.value.code == "E_INTERNAL"

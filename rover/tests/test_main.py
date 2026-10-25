@@ -56,9 +56,10 @@ def test_everything_off_builds_on_a_laptop():
     try:
         assert b.inventory() == {
             "motors": False,
-            "servos": False,
-            "imu": False,
-            "camera": False,  # the backend name once one is live, e.g. "picamera2"
+            "servos": False,  # the backend name once one is live, e.g. "gpio"
+            "imu": False,  # or "mpu6050@0x68"
+            "gyro": False,  # docs/05 U-2: this is what decides gyro vs timed turns
+            "camera": False,  # or "picamera2"
             "exposure_locked": False,
             "focus_locked": False,
             "calibrated": False,
@@ -85,9 +86,18 @@ def test_sim_motors_are_present_so_the_timing_loop_actually_runs():
         b.close()
 
 
-def test_asking_for_an_unbuilt_imu_backend_fails_loudly():
-    with pytest.raises(SystemExit, match="imu.py"):
+def test_naming_an_absent_imu_chip_fails_loudly():
+    """`auto` degrades quietly; asking for a specific chip must not pretend it is there."""
+    with pytest.raises(SystemExit, match="--imu mpu6050"):
         rover_main.make_imu("mpu6050", CALIB)
+    with pytest.raises(SystemExit, match="--imu adxl345"):
+        rover_main.make_imu("adxl345", CALIB)
+
+
+def test_imu_auto_degrades_to_none_on_a_laptop():
+    """No I2C bus here, so auto must return None rather than raise (timed turns, tilt off)."""
+    assert rover_main.make_imu("auto", CALIB) is None
+    assert rover_main.make_imu("off", CALIB) is None
 
 
 def test_an_uncalibrated_calib_warns(caplog: pytest.LogCaptureFixture):
