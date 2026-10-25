@@ -1,0 +1,26 @@
+# Rover runtime: WS :8765/rover (doc 00 section 6.2). setup_pi.sh fills @USER@/@REPO@ and
+# installs this as /etc/systemd/system/rover.service.
+[Unit]
+Description=Rover runtime (WS :8765/rover)
+Wants=network-online.target chrony.service
+After=network-online.target chrony.service
+
+[Service]
+Type=simple
+User=@USER@
+WorkingDirectory=@REPO@
+# Device modes (ROVER_MOTORS, ROVER_SERVOS, ROVER_IMU, ROVER_CAMERA, ROVER_MAPPER, ...),
+# read by rover/rover/main.py. Optional: every mode defaults to `auto`.
+EnvironmentFile=-/etc/default/rover
+ExecStart=@REPO@/.venv/bin/python -m rover.main
+# The safety latches live in this process, and a restart comes back IDLE, not mid-op.
+# UNVERIFIED: when the process dies, lgpio releases the L293D EN pins to inputs and they
+# float; the L293D's TTL-level inputs can read a floating pin as HIGH. A 10k pull-down on
+# EN1/EN2 (P1 harness) is what makes "process dead" mean "motors coast".
+Restart=always
+RestartSec=2
+# gpiozero/lgpio and the I2C bus.
+SupplementaryGroups=gpio i2c video
+
+[Install]
+WantedBy=multi-user.target
