@@ -9,12 +9,11 @@ function parse<T>(json: string, fallback: T): T {
   try { return JSON.parse(json) as T; } catch { return fallback; }
 }
 
-// Latest mission with parsed params and assumptions; text box sends a mission (docs/06 §5).
+// Latest mission with parsed params; text box sends a mission (docs/06 §5).
 // Push-to-talk (VoiceButton) sits next to the text box.
 export default function MissionPanel({ missions, live, fsmState }: { missions: readonly Mission[]; live: boolean; fsmState?: string }) {
   const m = [...missions].sort((a, b) => b.missionId.localeCompare(a.missionId))[0]; // m_0002 > m_0001
   const p = m ? parse<Params>(m.paramsJson, {}) : {};
-  const assumptions = m ? parse<string[]>(m.assumptionsJson, []) : [];
   const [text, setText] = useState('');
   const [err, setErr] = useState('');
 
@@ -33,7 +32,6 @@ export default function MissionPanel({ missions, live, fsmState }: { missions: r
             {m.missionId} · <b>{m.status}</b> · radius {p.radius_m ?? '—'} m · k {p.k ?? '—'} ·{' '}
             {(p.categories ?? []).join(', ') || '—'} · {p.mode ?? '—'}
           </p>
-          {assumptions.length > 0 && <p className="meta">assumptions: {assumptions.join('; ')}</p>}
         </>
       ) : (
         <p className="empty">No mission in this run.</p>
