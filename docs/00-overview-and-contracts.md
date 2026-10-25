@@ -236,7 +236,7 @@ All messages are JSON with the envelope `{"type": str, "t": float, "src": "brain
 }
 ```
 - Constraints: `radius_m` ∈ [0.3, 3.0]; `k` ∈ [1, 8]; `categories` ⊆ {`float_rock`, `layered`, `veined`, `sand`, `bedrock`, `pebble`, `any`}; `mode` ∈ {`act`, `suggest`}. In `suggest` mode the brain plans but waits for `approve`.
-- When the NLU can't parse a field, it uses the default and lists it in `assumptions: [str]`.
+- When the NLU can't parse a field, it uses the default and lists it in `assumptions: [str]`. Defaults live in `config/run.yaml` `mission_defaults`: `radius_m` 1.0, `k` 1, the rest as in the example above.
 
 ### 6.2 Brain ↔ rover WebSocket (`ws://192.168.50.20:8765/rover`)
 

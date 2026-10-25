@@ -1,8 +1,8 @@
 # Mirror of docs/00-overview-and-contracts.md §4, §6.1, §8. Doc 00 wins; a test compares them.
 
-mission_defaults:          # from the §6.1 example
-  radius_m: 1.5
-  k: 3
+mission_defaults:          # doc 00 §6.1: used for any field the speaker didn't state
+  radius_m: 1.0
+  k: 1
   categories: [any]
   sample: true
   return_home: true
