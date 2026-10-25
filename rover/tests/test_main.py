@@ -512,3 +512,42 @@ def test_one_picture_station_stores_it_and_survives_a_dead_mapper(tmp_path, monk
         assert b.state == "IDLE"
     finally:
         b.close()
+
+
+# --- request_stop must latch, not just stop (safety) --------------------------------------
+
+
+def test_request_stop_latches_so_a_worker_cannot_undo_it():
+    """A bare stop() is undone by the next set() about 20 ms later (docs/05 R14)."""
+    b = backend(motors="sim")
+    try:
+        b.request_stop()
+        assert b.motors.inhibited, "request_stop must latch, not just stop once"
+        b.motors.set(0.5, 0.5)
+        assert b.motors.last == (0.0, 0.0), "a latched motor must ignore set()"
+    finally:
+        b.close()
+
+
+def test_the_request_stop_latch_is_released_by_the_next_heartbeat():
+    """Otherwise a dropped link bricks the rover until someone restarts the service."""
+    b = backend(motors="sim")
+    try:
+        b.request_stop()
+        assert b.motors.inhibited
+        b.on_heartbeat()  # what a reconnecting brain sends within 0.25 s
+        assert not b.motors.inhibited, "a reconnecting brain must un-brick the rover"
+        b.motors.set(0.5, 0.5)
+        assert b.motors.last == (0.5, 0.5)
+    finally:
+        b.close()
+
+
+def test_request_stop_reads_as_a_timeout_to_motion():
+    """Motion._cut maps the watchdog latch to E_TIMEOUT, which is what aborts a station."""
+    b = backend(motors="sim")
+    try:
+        b.request_stop()
+        assert b.motion._cut() == "E_TIMEOUT"
+    finally:
+        b.close()

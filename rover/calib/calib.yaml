@@ -45,7 +45,12 @@ motion:
   # Prefer fixing a backwards motor in the wiring (docs/01 section 4). These are the escape hatch.
   invert_left: false
   invert_right: false
-  min_speed: 0.15           # UNVERIFIED: below this the gearmotors buzz instead of turning
+  min_speed: 0.30           # UNVERIFIED: below this the gearmotors buzz instead of turning.
+                            # Do NOT drop this below the lowest key in the speed tables
+                            # (0.3). A station turns at exactly min_speed, and interp()
+                            # clamps below the first key -- so 0.15 would be timed as if the
+                            # rover were turning 45 deg/s while the motors sat at 15% duty,
+                            # and every keyframe heading after the first would be wrong.
   turn_settle_s: 0.3        # P2 role doc section 5: settle between station views
   gyro_turn_gain: 1.0       # UNVERIFIED: closed-loop turn trim
   motor_trim: 0.0           # UNVERIFIED: >0 scales the LEFT wheel by (1 - trim). calibrate_motion.py

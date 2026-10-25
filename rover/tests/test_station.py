@@ -460,3 +460,37 @@ def test_events_bracket_the_station():
     assert done["keyframes"] == 8
     assert done["uploaded"] is True
     assert done["bev"] is True
+
+
+# --- a stop must actually end the station -------------------------------------------------
+
+
+def test_an_inhibited_motor_aborts_the_station():
+    """The link-drop case. `HardwareBackend.request_stop` latches the motors; without this
+    check the station would photograph one more view before the next turn noticed -- and a
+    station is the one op long enough for "keeps spinning unwatched" to be real."""
+
+    class Inhibited:
+        inhibited = True
+        latches = frozenset({"watchdog"})
+
+    station, store, _, _ = build(uploader=FakeUploader())
+    station.motion.motors = Inhibited()  # type: ignore[attr-defined]
+    with pytest.raises(Aborted) as e:
+        station.run_station("s_0001", 8, 45.0)
+    assert e.value.code == "E_TIMEOUT"
+    assert "watchdog" in e.value.msg
+    assert not store.saved, "a station cut short must not be uploaded"
+
+
+def test_a_station_runs_when_the_motors_are_free():
+    """The other side: the new check must not refuse a healthy station."""
+
+    class Free:
+        inhibited = False
+        latches: frozenset[str] = frozenset()
+
+    station, store, _, _ = build(uploader=FakeUploader())
+    station.motion.motors = Free()  # type: ignore[attr-defined]
+    station.run_station("s_0001", 2, 180.0)
+    assert len(store.saved[0][0].keyframes) == 2

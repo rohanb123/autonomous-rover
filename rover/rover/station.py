@@ -410,7 +410,7 @@ class Station:
     # --- plumbing -------------------------------------------------------------------------
 
     def _check_cut(self) -> None:
-        """Abort between views on an E-STOP or a tilt latch.
+        """Abort between views on an E-STOP, a tilt latch, or any motor inhibit.
 
         `Motion` already polls this inside a turn; this covers the gaps -- a capture, a JPEG
         encode and a settle add up to most of a view's wall time.
@@ -420,6 +420,14 @@ class Station:
             raise Aborted(code, self.safety.stop_reason() or "cut during station")
         if self.safety.latched():
             raise Aborted("E_ESTOP", self.safety.stop_reason() or "latched during station")
+        # Any latch at all, including the one `HardwareBackend.request_stop` sets when the
+        # link drops or the op runs out of time. Without this the station would take one more
+        # photograph before the next turn noticed, and a station is the one op long enough
+        # for that to matter.
+        motors = getattr(self.motion, "motors", None)
+        if motors is not None and motors.inhibited:
+            held = ",".join(sorted(motors.latches))
+            raise Aborted("E_TIMEOUT", f"motors inhibited during station ({held})")
 
     def _event(self, kind: str, ref: str, detail: dict[str, Any]) -> None:
         payload = {"station_id": ref, **detail} if ref else dict(detail)

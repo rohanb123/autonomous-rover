@@ -477,6 +477,20 @@ class HardwareBackend:
         return self.safety.take_cut()
 
     def request_stop(self, code: ErrCode | None = None) -> None:
+        """Halt whatever is running. Called on an op deadline and on a dropped link.
+
+        The `inhibit` is the load-bearing half, and it has to be a latch rather than a bare
+        `stop()`: a multi-step op is not stopped by stopping the motors once. `station` calls
+        `Motion.turn` per view, and `turn` begins with `clear_stop()` -- so without a latch
+        the next view erases the stop request and the rover finishes its spin with nobody
+        watching, because the 20 Hz watchdog loop dies with the session that asked it to stop.
+
+        The reason is "watchdog" deliberately, not a new name: `Motion._cut` already maps
+        that latch to E_TIMEOUT, and `Safety.on_heartbeat` already releases it, so a
+        reconnecting brain's first heartbeat un-bricks the rover. A bespoke reason would
+        have nothing wired to release it.
+        """
+        self.motors.inhibit("watchdog")
         self.motion.request_stop()
         self.motors.stop()
 
@@ -638,6 +652,41 @@ def _snapshot_ended(task: asyncio.Task, backend: HardwareBackend) -> None:
         log.error("snapshot server stopped: %s", task.exception())
 
 
+async def _serve_until_signalled() -> None:
+    """Block until SIGTERM/SIGINT, then return so the `finally` can shut the hardware down.
+
+    This is why it exists rather than awaiting a bare future: systemd's default kill signal
+    is SIGTERM, and Python's default SIGTERM disposition kills the interpreter WITHOUT
+    unwinding. So `systemctl stop rover` used to skip `backend.close()` entirely -- no
+    `motors.stop()` -- and the kernel released the GPIO pins to floating inputs, which an
+    L293D's TTL inputs can read as HIGH (see rover/deploy/rover.service). Ctrl-C was handled
+    and `systemctl stop` was not, which is the wrong way round for the one that runs
+    unattended.
+
+    `add_signal_handler` is POSIX-only; on Windows it raises NotImplementedError and the
+    laptop path falls back to the plain future, where KeyboardInterrupt already works.
+    """
+    loop = asyncio.get_running_loop()
+    stop = loop.create_future()
+    import signal
+
+    for name in ("SIGTERM", "SIGINT"):
+        sig = getattr(signal, name, None)
+        if sig is None:
+            continue
+        try:
+            loop.add_signal_handler(sig, lambda n=name: _signalled(stop, n))
+        except (NotImplementedError, RuntimeError):
+            pass  # Windows, or no main thread: KeyboardInterrupt covers it
+    await stop
+
+
+def _signalled(stop: asyncio.Future, name: str) -> None:
+    log.info("%s: shutting down and de-energising the hardware", name)
+    if not stop.done():
+        stop.set_result(None)
+
+
 async def main_async(args: argparse.Namespace) -> None:
     calib = load_calib(args.calib)
     backend = build_backend(
@@ -660,7 +709,7 @@ async def main_async(args: argparse.Namespace) -> None:
                 backend.snapshot_served = True
                 http.add_done_callback(lambda t: _snapshot_ended(t, backend))
                 log.info("snapshot/stream on http://%s:%d", args.host, args.snapshot_port)
-            await asyncio.get_running_loop().create_future()  # serve until cancelled
+            await _serve_until_signalled()
     finally:
         if http is not None:
             http.cancel()
