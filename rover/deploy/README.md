@@ -51,6 +51,78 @@ Mid-`drive`, run `sudo nmcli radio wifi off; sleep 10; sudo nmcli radio wifi on`
 The motors stop within 1 s (watchdog), the brain's `rover_link` logs `rover link down` and
 then `rover link up`, and `uplink_backlog` drains.
 
+## 6. One-picture test: Pi → GX10 → dashboard
+Goal: the Pi takes one photo, the GX10 stores it, and the dashboard's **Keyframe panel**
+shows it. Until `calibrate_camera.py` has run, a station uploads keyframes only (no BEV, so
+nothing new in the 3D view yet). That needs `ROVER_ALLOW_UNCALIBRATED=1` in `/etc/default/rover`,
+which is the `rover.env.example` default. Restart with `sudo systemctl restart rover` after editing.
+
+**A. GX10, once**
+```bash
+# network: hotspot + chrony server, commands in docs/requests/2026-10-24-P2-to-P4-gx10-hotspot.md
+cd ~/autonomous-rover && python3 -m venv .venv && . .venv/bin/activate
+pip install -e shared/py -r gx10/brain/requirements.txt -r gx10/mapper/requirements.txt
+curl -sSf https://install.spacetimedb.com | sh
+spacetime start --listen-addr 0.0.0.0:3000                     # its own terminal; leave running
+curl -X POST http://192.168.50.10:3000/v1/identity              # -> brain  {identity, token}
+curl -X POST http://192.168.50.10:3000/v1/identity              # -> mapper {identity, token}
+cp config/.env.example config/.env   # set STDB_TOKEN_BRAIN, STDB_TOKEN_MAPPER, STDB_IDENTITY_MAPPER
+./scripts/publish_stdb.sh            # module + claim_writer (brain) + add_writer (mapper)
+./scripts/gen_bindings.sh            # dashboard/src/module_bindings
+```
+Vision isn't needed: a station with zero proposals never calls it.
+
+**B. Pi, once:** steps 1–3 above. Then check `journalctl -u rover -n 30`: the inventory line
+shows `camera: picamera2` and `imu: mpu6050@0x68`.
+
+**C. Dashboard** (laptop on marsnet, or the GX10's own browser)
+```bash
+cp dashboard/.env.example dashboard/.env && cd dashboard && npm install && npm run dev
+# open http://localhost:5173
+```
+
+**D. Start the GX10 services**: two terminals, each starting from the repo root.
+```bash
+source scripts/_env.sh && cd gx10 && uvicorn mapper.app:app --host 0.0.0.0 --port 8200
+source scripts/_env.sh && cd gx10 && uvicorn brain.app:app  --host 0.0.0.0 --port 8000
+```
+Use these two rather than `dev_up.sh`, which also starts vision and overhead.
+
+**E. Check the link** (on the GX10)
+```bash
+python rover/rover/linkcheck.py --only pi       # all ok: offset < 50 ms, p95 < 250 ms
+curl http://192.168.50.10:8200/health           # {"ok":true,"stdb":true}
+```
+
+**F. The test** (on the GX10)
+```bash
+curl -X POST http://192.168.50.10:8000/api/run/start \
+     -H 'Content-Type: application/json' -d '{"notes":"one-picture test"}'
+spacetime sql marsrover "SELECT run_id, status FROM run"      # copy the newest run_id -> R
+python rover/rover/sendcmd.py --pi 192.168.50.20 start_run run_id=R -- \
+       station station_id=s_0001 n_views=1
+```
+Expected: `ack`, then `done … 1 keyframe(s), 0 proposal(s), mapper.ok=True`. Then check:
+- `ls data/runs/R/stations/s_0001/` shows `kf_000.jpg` and `station.json`.
+- `curl -o kf.jpg http://192.168.50.10:8200/files/runs/R/stations/s_0001/kf_000.jpg` downloads the photo.
+- The dashboard **Keyframe panel** shows it, captioned `k_0001 · s_0001 · heading 0°`. Click it for full resolution.
+
+**Resilience drill:** stop the mapper (Ctrl+C), then run
+`sendcmd.py --pi 192.168.50.20 station station_id=s_0002 n_views=1`.
+- You get `done … mapper.ok=False`, telemetry shows `uplink_backlog: 1`, and the brain logs an `upload_retry` event.
+- Restart the mapper and the photo arrives within 30 s. The dashboard updates by itself.
+
+**G. If it fails**
+
+| Symptom | Fix |
+|---|---|
+| `err E_INTERNAL … needs the camera` | The venv must be built with `--system-site-packages` (picamera2 comes from apt), or the CSI ribbon isn't seated. `libcamera-hello --list-cameras` should list it. |
+| `err E_INTERNAL … calibrated_at` | `ROVER_ALLOW_UNCALIBRATED=1` is missing from `/etc/default/rover`, or the service wasn't restarted. |
+| `err E_BAD_ARGS station before start_run` | Send `start_run run_id=R` first, in the same command. |
+| `done` but nothing on the dashboard | Mapper `/health` shows `stdb:false`: check `STDB_TOKEN_MAPPER` / `STDB_IDENTITY_MAPPER` and re-run `publish_stdb.sh`. Otherwise `R` isn't the dashboard's run (RunPicker), or the bindings weren't regenerated. |
+| linkcheck clock offset FAIL | Run `chronyc tracking` on the Pi, and check the GX10's chrony `allow 192.168.50.0/24`. |
+| `! ws://…: no answer` | Check `systemctl status rover` on the Pi, and that `ping 192.168.50.20` works. |
+
 ## Laptop (no Pi)
 ```bash
 python rover/rover/main.py --motors sim --camera sim          # WS :8765 + :8080
@@ -60,3 +132,10 @@ The file form works from a bare checkout. `python -m rover.linkcheck` needs `pip
 (done on the Pi in step 3). Uploads go to `--mapper` (default `http://192.168.50.10:8200`) and
 queue in `--store` (default `<repo>/data/rover`), so set `--mapper http://127.0.0.1:8200` for
 a local `mocks/fake_mapper.py`.
+
+The one-picture test on a laptop, all real code apart from the hardware:
+```bash
+python mocks/fake_mapper.py --port 8201 --no-stdb
+python rover/rover/main.py --motors sim --camera sim --allow-uncalibrated --mapper http://127.0.0.1:8201
+python rover/rover/sendcmd.py --pi 127.0.0.1 start_run run_id=r_20261024_120000 -- station station_id=s_0001 n_views=1
+```
