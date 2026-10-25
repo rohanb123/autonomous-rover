@@ -1,7 +1,7 @@
 """SD-card bundles + a SQLite index: the Pi's buffer and backup (doc 00 section 1 table).
 
     <root>/<run_id>/stations/<station_id>/station.json, kf_*.jpg, bev.png, crop_p_*.jpg
-    <root>/<run_id>/samples/<sample_id>/sample.json, present.jpg
+    <root>/<run_id>/samples/<sample_id>/sample.json, closeup.jpg
     <root>/index.sqlite        one row per bundle: uploaded? attempts, last error
 
 The index is what makes the upload queue survive a reboot or a service restart: the retry
@@ -98,7 +98,7 @@ class LocalStore:
             sample.run_id,
             sample.sample_id,
             sample.model_dump_json(),
-            {"present.jpg": jpg},
+            {"closeup.jpg": jpg},  # the part name the mapper requires (doc 00 section 6.5)
         )
 
     def _save(

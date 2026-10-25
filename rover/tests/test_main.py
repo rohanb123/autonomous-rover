@@ -142,35 +142,72 @@ def test_an_unknown_device_mode_is_rejected():
         rover_main.parse_args(["--motors", "teleport"])
 
 
-# --- honest refusals -----------------------------------------------------------------------
+# --- approach and sample ------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("op", sorted(rover_main.UNBUILT))
-def test_unbuilt_ops_name_what_is_missing(op: str, tmp_path: Path, monkeypatch):
-    """Not E_LOST_TARGET: fsm.py maps that onto a physical outcome and carries on,
-    so using them would make the brain invent sample results for code that does not exist."""
-    monkeypatch.setenv("MARSROVER_DATA_DIR", str(tmp_path))
-    b = backend()
+def test_approach_turns_and_drives_into_close_up_range():
+    from rover.approach import CLOSEUP_STANDOFF_M
+
+    b = backend(motors="sim")
     try:
         b.start_run(RUN_ID)
-        args = {
-            "station": {"station_id": "s_0001", "n_views": 8, "step_deg": 45.0},
-            "approach": {"cand_id": "c_0001", "x": 0.4, "y": 0.0},
-            "sample": {"sample_id": "a_0001"},
-        }.get(op, {})
-        handler = getattr(b, op)
-        with pytest.raises(ws_server.OpError) as exc:
-            result = handler(**args)
-            if asyncio.iscoroutine(result):
-                asyncio.run(result)
-        assert exc.value.code == "E_INTERNAL"
-        assert exc.value.msg, "the message is where the honesty lives"
+        result = asyncio.run(b.approach("c_0001", 0.0, 0.7))  # straight left, 0.7 m
+        assert result["in_zone"] is True
+        assert result["offset_px"] == [0.0, 0.0]
+        p = result["pose"]
+        assert p["heading_deg"] == pytest.approx(90.0, abs=3.0)
+        assert p["y"] == pytest.approx(0.7 - CLOSEUP_STANDOFF_M, abs=0.03)
+        assert b.state == "IDLE"
     finally:
         b.close()
 
-    lines = (tmp_path / "runs" / RUN_ID / "events.jsonl").read_text(encoding="utf-8").splitlines()
-    kinds = [json.loads(line)["kind"] for line in lines]
-    assert "unimplemented" in kinds
+
+def test_approach_out_of_range_does_not_move():
+    b = backend(motors="sim")
+    try:
+        b.start_run(RUN_ID)
+        result = asyncio.run(b.approach("c_0001", 3.0, 0.0))
+        assert result["in_zone"] is False
+        assert result["pose"]["x"] == 0.0 and result["pose"]["y"] == 0.0
+    finally:
+        b.close()
+
+
+def test_sample_saves_the_close_up_and_survives_a_dead_mapper(tmp_path, monkeypatch):
+    b = station_backend(tmp_path, monkeypatch, allow=True)
+    try:
+        b.start_run(RUN_ID)
+        b.last_cand_id = "c_0007"
+        result = asyncio.run(b.sample("a_0001"))
+        assert result["uploaded"] is False and result["image_url"] == ""
+        folder = tmp_path / "store" / RUN_ID / "samples" / "a_0001"
+        assert sorted(p.name for p in folder.iterdir()) == ["closeup.jpg", "sample.json"]
+        meta = json.loads((folder / "sample.json").read_text(encoding="utf-8"))
+        assert meta["cand_id"] == "c_0007" and meta["run_id"] == RUN_ID
+        assert b.state == "IDLE"
+    finally:
+        b.close()
+
+
+def test_sample_before_start_run_is_bad_args(tmp_path, monkeypatch):
+    b = station_backend(tmp_path, monkeypatch, allow=True)
+    try:
+        with pytest.raises(ws_server.OpError) as exc:
+            asyncio.run(b.sample("a_0001"))
+        assert exc.value.code == "E_BAD_ARGS"
+    finally:
+        b.close()
+
+
+def test_sample_without_a_camera_names_it(tmp_path, monkeypatch):
+    b = station_backend(tmp_path, monkeypatch, allow=True, camera="off")
+    try:
+        b.start_run(RUN_ID)
+        with pytest.raises(ws_server.OpError) as exc:
+            asyncio.run(b.sample("a_0001"))
+        assert exc.value.code == "E_INTERNAL" and "camera" in exc.value.msg
+    finally:
+        b.close()
 
 
 def test_approach_still_remembers_the_cand_id_it_was_given():

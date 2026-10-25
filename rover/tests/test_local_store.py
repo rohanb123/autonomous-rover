@@ -47,7 +47,7 @@ def test_load_round_trips(tmp_path):
     rel = store.save_sample(sample(), b"\xff\xd8present")
     bundle = store.load(rel)
     assert bundle.kind == "sample" and bundle.meta_name == "sample.json"
-    assert dict(bundle.files) == {"present.jpg": b"\xff\xd8present"}
+    assert dict(bundle.files) == {"closeup.jpg": b"\xff\xd8present"}
     assert SampleJson.model_validate_json(bundle.meta_json) == sample()
 
 

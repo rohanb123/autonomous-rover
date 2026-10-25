@@ -17,12 +17,9 @@ simulates. `sim` has to be asked for.
 Env fallbacks, each overridden by its flag: ROVER_MOTORS, ROVER_SONAR, ROVER_IMU,
 ROVER_CAMERA, ROVER_CALIB.
 
-An op whose module is not built yet answers `E_INTERNAL` with a message naming what is
-missing. Not `E_LOST_TARGET` or `E_SCOOP`: P4's FSM maps those onto *physical* outcomes
-(gx10/brain/fsm.py records "unreachable" and carries on), so using them would make the
-brain invent sample results for code that does not
-exist. `E_INTERNAL` reaches `_guarded` (fsm.py:265), is logged at error level and stops the
-run, which is the honest outcome.
+A missing device answers `E_INTERNAL` with a message naming it. Not `E_LOST_TARGET`:
+P4's FSM maps that onto a *physical* outcome ("unreachable"), so using it would make the
+brain record a rock as out of reach when the truth is that a device is unplugged.
 """
 
 from __future__ import annotations
@@ -50,8 +47,10 @@ from marsrover_shared.schemas import (  # noqa: E402
     Imu,
     Pose,
     RoverState,
+    SampleJson,
     Telemetry,
 )
+from rover import approach as approach_mod  # noqa: E402
 from rover import snapshot_server, ws_server  # noqa: E402
 from rover.camera import Camera, CameraError, NullSource, SyntheticSource  # noqa: E402
 from rover.config import Calib, CalibError, load_calib  # noqa: E402
@@ -81,11 +80,10 @@ SRC = "rover"
 CPU_TEMP_PATH = Path("/sys/class/thermal/thermal_zone0/temp")
 CPU_TEMP_CACHE_S = 1.0
 
-#: Ops whose module is not written yet, and what is missing. Answered with E_INTERNAL.
-UNBUILT: dict[str, str] = {
-    "approach": "approach is not implemented yet (P2 I3); not E_LOST_TARGET, nothing was tracked",
-    "sample": "sample needs a close-up capture + /ingest/sample upload (P2 I3)",
-}
+#: Duty for the last, short `approach` moves: slow enough not to overshoot a 30 cm gap.
+APPROACH_SPEED = 0.4
+#: Below this an approach drive is skipped; timed drives cannot resolve it.
+MIN_APPROACH_DRIVE_M = 0.01
 
 
 # --- device factories ----------------------------------------------------------------------
@@ -316,12 +314,6 @@ class HardwareBackend:
         with contextlib.suppress(OSError):
             eventlog.log(self.run_id, SRC, level, kind, msg, data)
 
-    def _refuse(self, op: str) -> OpError:
-        msg = UNBUILT[op]
-        log.error("%s refused: %s", op, msg)
-        self._log_event("warn", "unimplemented", msg, {"op": op})
-        return OpError("E_INTERNAL", msg)
-
     def _need(self, op: str, device: str, present: bool, hint: str) -> None:
         if present:
             return
@@ -441,11 +433,67 @@ class HardwareBackend:
         self._log_event("info", kind, f"{kind} {detail}", detail)
 
     async def approach(self, cand_id: str, x: float, y: float) -> dict[str, Any]:
+        """Face (x, y) and close to close-up range. Dead reckoning: see approach.py."""
         self.last_cand_id = cand_id  # sample.json needs it (doc 00 section 6.5)
-        raise self._refuse("approach")
+        self._need("approach", "motors", self.motors.present, "use --motors sim to exercise timing")
+        pose = await self._offload("APPROACH", self._approach_moves, x, y)
+        return {
+            "in_zone": approach_mod.in_zone(pose, x, y),
+            "pose": pose.model_dump(),
+            "offset_px": [0.0, 0.0],  # UNVERIFIED: no visual servo, so nothing is measured
+        }
+
+    def _approach_moves(self, x: float, y: float) -> Pose:
+        plan = approach_mod.plan_approach(self.pose.current(), x, y)
+        if not plan.reachable:
+            log.warning("approach: (%.2f, %.2f) is out of range; not moving", x, y)
+            return self.pose.current()
+        if plan.turn_deg:
+            self.motion.turn(plan.turn_deg, APPROACH_SPEED)
+        if abs(plan.drive_m) > MIN_APPROACH_DRIVE_M:
+            self.motion.drive(plan.drive_m, APPROACH_SPEED)
+        return self.pose.current()
 
     async def sample(self, sample_id: str) -> dict[str, Any]:
-        raise self._refuse("sample")
+        """A close-up photo of the target, saved to the SD card, then one upload attempt.
+
+        Like a station, a failed upload is still `done` (uploaded=false): the photo is safe
+        and the retry thread has it. image_url is "" then, since nothing can fetch it yet.
+        """
+        if not self.run_id:
+            raise OpError("E_BAD_ARGS", "sample before start_run: sample.json needs a run_id")
+        self._need("sample", "camera", self.camera.present, "use --camera sim on a laptop")
+        if self.store is None:
+            raise OpError("E_INTERNAL", "sample needs the local store (--store)")
+        try:
+            jpg = await self._offload("SAMPLING", self._closeup)
+        except CameraError as e:
+            raise OpError("E_CAMERA", str(e)) from e
+        sample = SampleJson(
+            run_id=self.run_id,
+            sample_id=sample_id,
+            cand_id=self.last_cand_id,
+            t=time.time(),
+            pose=self.pose.current(),
+        )
+        rel = await asyncio.to_thread(self.store.save_sample, sample, jpg)  # off the loop
+        url, uploaded = "", False
+        if self.uploader is not None:
+            try:
+                url, uploaded = (
+                    await asyncio.to_thread(self.uploader.upload_sample, rel)
+                ).url, True
+            except Exception as e:  # stored and queued: the retry thread sends it later
+                log.warning("sample %s stored but not uploaded: %s", sample_id, e)
+                self._log_event("warn", "sample_upload_deferred", str(e), {"sample_id": sample_id})
+        return {"image_url": url, "uploaded": uploaded, "pose": sample.pose.model_dump()}
+
+    def _closeup(self) -> bytes:
+        self.camera.focus_for_present()
+        try:
+            return self.camera.jpeg(self.camera.grab())
+        finally:
+            self.camera.focus_for_survey()  # the next station must not inherit macro focus
 
     # --- safety hooks --------------------------------------------------------------------
 
