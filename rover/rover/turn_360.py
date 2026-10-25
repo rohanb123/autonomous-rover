@@ -22,7 +22,7 @@ import time
 from gpiozero import Motor
 
 # ---- motor / turn settings ----
-TURN_SPEED = 0.65       # 0..1; spin duty cycle
+TURN_SPEED = 0.35       # 0..1; spin duty cycle
 APPROACH_SPEED = 0.50   # 0..1; forward drive duty cycle
 TOTAL_DEG = 360.0
 STOP_EARLY_DEG = 3.0    # cut spin power this many degrees early to allow coasting
