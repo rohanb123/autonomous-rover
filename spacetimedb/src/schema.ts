@@ -146,7 +146,7 @@ const visit = table(
     x: t.f64(),
     y: t.f64(),
     radiusM: t.f64(),
-    outcome: t.string(), // sampled | empty_scoop | unreachable | skipped
+    outcome: t.string(), // sampled | unreachable | skipped
     tUnix: t.f64(),
   }
 );
@@ -165,7 +165,6 @@ const analysisRecord = table(
     label: t.string(),
     confidence: t.f64(),
     caption: t.string(),
-    scoopHasItem: t.bool(),
     // Simulated Bradford assay (docs/02 §5, Steering 2). "" / -1 when there is no assay.
     assayType: t.string(),
     a595: t.f64(),
@@ -190,7 +189,7 @@ const telemetry = table(
     batteryV: t.f64(), // -1 if unknown
     cpuTempC: t.f64(),
     imuJson: t.string(),
-    scoopPose: t.string(),
+    rangeM: t.f64(), // HC-SR04 metres; -1 = no reading
     uplinkBacklog: t.u32(),
   }
 );

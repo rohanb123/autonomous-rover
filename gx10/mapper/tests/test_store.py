@@ -35,7 +35,7 @@ def test_save_station_layout(tmp_path):
 
 def test_save_sample_layout(tmp_path):
     rel = RunStore(tmp_path).save_sample(RUN, {"sample_id": "a_0001"}, b"jpg")
-    assert rel == f"runs/{RUN}/samples/a_0001/present.jpg"
+    assert rel == f"runs/{RUN}/samples/a_0001/closeup.jpg"
     assert (tmp_path / rel).read_bytes() == b"jpg"
 
 
@@ -43,7 +43,7 @@ def test_resolve_blocks_traversal_and_missing(tmp_path):
     s = RunStore(tmp_path / "data")
     s.save_sample(RUN, {"sample_id": "a_0001"}, b"x")
     (tmp_path / "secret.txt").write_text("no", encoding="utf-8")
-    assert s.resolve(f"runs/{RUN}/samples/a_0001/present.jpg") is not None
+    assert s.resolve(f"runs/{RUN}/samples/a_0001/closeup.jpg") is not None
     assert s.resolve("../secret.txt") is None
     assert s.resolve("runs/nope.jpg") is None
     assert s.resolve(f"runs/{RUN}/samples") is None  # directories aren't served

@@ -1,4 +1,4 @@
-"""Can the scoop pick this up? (docs/roles/P3 §4, docs/01 §3: pebbles 1.5-3 cm, bucket ~5 cm.)
+"""Is this a well-formed, isolated target worth a close-up? (docs/roles/P3 §4.)
 
 1.0 for sizes in [0.012, 0.030] m, falling linearly to 0 at 0.005 m and at 0.045 m.
 `size_m` is the Pi's estimate (docs/00 §6.4 proposals[].size_m); this module just trusts it.

@@ -20,7 +20,6 @@ export default {
   label: __t.string(),
   confidence: __t.f64(),
   caption: __t.string(),
-  scoopHasItem: __t.bool(),
   assayType: __t.string(),
   a595: __t.f64(),
   concentration: __t.f64(),

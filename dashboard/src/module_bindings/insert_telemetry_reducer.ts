@@ -17,6 +17,6 @@ export default {
   batteryV: __t.f64(),
   cpuTempC: __t.f64(),
   imuJson: __t.string(),
-  scoopPose: __t.string(),
+  rangeM: __t.f64(),
   uplinkBacklog: __t.u32(),
 };

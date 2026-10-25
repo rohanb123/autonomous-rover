@@ -68,8 +68,8 @@ All tables `public: true` except `writer`. Every run-scoped table has a btree in
 | `global_tile` | `tileId` str (`g_<run>_<ix>_<iy>`) | runId, ix, iy i32, originX, originY, resMPx, wPx, hPx, pngB64, version u32 | mapper `upsert_global_tile` | map tiles layer (replay) |
 | `candidate` | `key` str = `runId\|candId` | candId, runId, stationId, x, y, score, componentsJson, category, sizeM, status, rank i32 (-1 = not in top-k), reason, thumbUrl, tUnix | brain `upsert_candidate` | TaskQueuePanel (top-k), map pins layer, PinDetailDrawer |
 | `visit` | `key` str = `runId\|visitId` | visitId, runId, candId, x, y, radiusM, outcome, tUnix | brain `mark_visited` | map exclusion layer, PinDetailDrawer |
-| `analysis_record` | `id` u64 autoInc | key = `runId\|sampleId` (unique idx), runId, sampleId, candId, visitId, tUnix, imageUrl, label, confidence, caption, scoopHasItem, **assayType, a595, concentration, units, verdict, inLinearRange, standardCurveParams, simulated, seed u32, modelVersion** | brain `add_analysis` | PinDetailDrawer, **BradfordPanel** (P3) |
-| `telemetry` | `id` u64 autoInc | runId, tUnix, state, batteryV (-1 if unknown), cpuTempC, imuJson, scoopPose, uplinkBacklog | brain `insert_telemetry` (1 Hz) | HealthPanel |
+| `analysis_record` | `id` u64 autoInc | key = `runId\|sampleId` (unique idx), runId, sampleId, candId, visitId, tUnix, imageUrl, label, confidence, caption, **assayType, a595, concentration, units, verdict, inLinearRange, standardCurveParams, simulated, seed u32, modelVersion** | brain `add_analysis` | PinDetailDrawer, **BradfordPanel** (P3) |
+| `telemetry` | `id` u64 autoInc | runId, tUnix, state, batteryV (-1 if unknown), cpuTempC, imuJson, rangeM, uplinkBacklog | brain `insert_telemetry` (1 Hz) | HealthPanel |
 | `rover_status` | `key` str = `"rover"` (single row) | runId, tUnix, state, estop bool, x, y, headingDeg, fsmState, activeCandId, linkOk bool, updatedUnix | brain `upsert_rover_status` (2 Hz) | ConnectionBadge, EStopButton state, HealthPanel, map rover glyph |
 | `event` | `id` u64 autoInc | runId, tUnix, src, level, kind, msg, dataJson | brain/mapper `log_event` | EventLog, TimelineScrubber ticks |
 | `writer` (private) | `identityHex` str | addedUnix, label | `claim_writer`, `add_writer` | — |
@@ -81,7 +81,7 @@ On `analysis_record`; all written in the **same** `add_analysis` call as the pla
 
 | Column | Type | Example | Notes |
 |---|---|---|---|
-| `assayType` | string | `"bradford_sim"` | `""` if no assay (empty scoop) |
+| `assayType` | string | `"bradford_sim"` | `""` if no assay |
 | `a595` | f64 | `0.2585` | blank-corrected simulated absorbance at 595 nm |
 | `concentration` | f64 | `282.1` | read back through the fitted BSA standard curve |
 | `units` | string | `"µg/mL"` | |
@@ -114,7 +114,7 @@ export const candidate = table({ name: 'candidate', public: true, indexes: runId
 export const analysis_record = table({ name: 'analysis_record', public: true, indexes: runIdx('analysis_record') }, {
   id: t.u64().primaryKey().autoInc(), runId: t.string(), sampleId: t.string().unique(),
   candId: t.string(), visitId: t.string(), tUnix: t.f64(), imageUrl: t.string(),
-  label: t.string(), confidence: t.f64(), caption: t.string(), scoopHasItem: t.bool(),
+  label: t.string(), confidence: t.f64(), caption: t.string(),
   assayType: t.string(), a595: t.f64(), concentration: t.f64(), units: t.string(), verdict: t.string(),
   inLinearRange: t.bool(), standardCurveParams: t.string(), simulated: t.bool(), seed: t.u32(),
   modelVersion: t.string(),
@@ -144,14 +144,14 @@ Arg order below **is the HTTP positional order** (camelCase names in TS; Python 
 | `upsert_mission` | `missionId, runId, text, paramsJson, assumptionsJson, status` | Insert or update |
 | `upsert_task` | `taskId, runId, missionId, kind, ref, seq, status, note` | |
 | `insert_pose` | `runId, tUnix, x, y, headingDeg, source, sigmaXy` | Append |
-| `insert_telemetry` | `runId, tUnix, state, batteryV, cpuTempC, imuJson, scoopPose, uplinkBacklog` | Append |
+| `insert_telemetry` | `runId, tUnix, state, batteryV, cpuTempC, imuJson, rangeM, uplinkBacklog` | Append |
 | `upsert_rover_status` | `runId, tUnix, state, estop, x, y, headingDeg, fsmState, activeCandId, linkOk` | Single row key `"rover"`; sets `updatedUnix = tUnix` |
 | `upsert_keyframe` | `kfId, runId, stationId, tUnix, x, y, headingDeg, thumbB64, url` | Reject `thumbB64.length > 150_000` |
 | `upsert_local_tile` | `stationId, runId, tUnix, x, y, headingDeg, resMPx, wPx, hPx, pngB64, url` | Reject `pngB64.length > 700_000` |
 | `upsert_global_tile` | `tileId, runId, ix, iy, originX, originY, resMPx, wPx, hPx, pngB64, version` | Replace if `version` ≥ existing |
 | `upsert_candidate` | `candId, runId, stationId, x, y, score, componentsJson, category, sizeM, status, rank, reason, thumbUrl, tUnix` | Insert or full-row update (status/rank changes) |
 | `mark_visited` | `visitId, runId, candId, x, y, radiusM, outcome, tUnix` | Insert visit; set candidate status to `visited`/`skipped`/`failed` per outcome |
-| `add_analysis` | `runId, sampleId, candId, visitId, tUnix, imageUrl, label, confidence, caption, scoopHasItem, assayType, a595, concentration, units, verdict, inLinearRange, standardCurveParams, simulated, seed, modelVersion` | **Reject unless `simulated === true`**; reject `assayType` ∉ {`""`, `bradford_sim`}; reject verdict ∉ {`""`,`below_detection`,`low`,`elevated`}; idempotent on `sampleId` (update if exists) |
+| `add_analysis` | `runId, sampleId, candId, visitId, tUnix, imageUrl, label, confidence, caption, assayType, a595, concentration, units, verdict, inLinearRange, standardCurveParams, simulated, seed, modelVersion` | **Reject unless `simulated === true`**; reject `assayType` ∉ {`""`, `bradford_sim`}; reject verdict ∉ {`""`,`below_detection`,`low`,`elevated`}; idempotent on `sampleId` (update if exists) |
 | `log_event` | `runId, tUnix, src, level, kind, msg, dataJson` | Append; truncate `msg` to 500 chars |
 
 ### index.ts (sketch)
@@ -175,7 +175,7 @@ export const insert_pose = spacetimedb.reducer(
 
 export const add_analysis = spacetimedb.reducer({
   runId: t.string(), sampleId: t.string(), candId: t.string(), visitId: t.string(), tUnix: t.f64(),
-  imageUrl: t.string(), label: t.string(), confidence: t.f64(), caption: t.string(), scoopHasItem: t.bool(),
+  imageUrl: t.string(), label: t.string(), confidence: t.f64(), caption: t.string(),
   assayType: t.string(), a595: t.f64(), concentration: t.f64(), units: t.string(), verdict: t.string(),
   inLinearRange: t.bool(), standardCurveParams: t.string(), simulated: t.bool(), seed: t.u32(), modelVersion: t.string(),
 }, (ctx, a) => {

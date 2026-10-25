@@ -26,7 +26,7 @@ log = logging.getLogger(__name__)
 ACK_TIMEOUT_S = 0.5
 HEARTBEAT_S = 0.25
 # done timeouts per op (doc 00 §4); motion gets a generous default.
-DONE_TIMEOUT_S = {"station": 60.0, "approach": 45.0, "scoop": 30.0}
+DONE_TIMEOUT_S = {"station": 60.0, "approach": 45.0, "sample": 30.0}
 DEFAULT_DONE_TIMEOUT_S = 30.0
 
 

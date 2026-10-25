@@ -22,7 +22,6 @@ export default __t.row({
   label: __t.string(),
   confidence: __t.f64(),
   caption: __t.string(),
-  scoopHasItem: __t.bool().name("scoop_has_item"),
   assayType: __t.string().name("assay_type"),
   a595: __t.f64().name("a_595"),
   concentration: __t.f64(),

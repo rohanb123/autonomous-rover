@@ -1,7 +1,7 @@
 """Mapper service, FastAPI on :8200 (docs/00 §6.4-6.5, docs/roles/P3 §4-§6).
 
 POST /ingest/station  multipart (00 §6.4) -> store, upsert_keyframe ×N, upsert_local_tile, log_event
-POST /ingest/sample   multipart (00 §6.5) -> store present.jpg -> {ok, url}
+POST /ingest/sample   multipart (00 §6.5) -> store closeup.jpg -> {ok, url}
 POST /fuse/{run_id}   dead-reckoned mosaic -> upsert_global_tile ×N, set_run_fused -> {ok, tiles}
 GET  /files/{path}    files under the data root
 
@@ -231,10 +231,10 @@ def create_app(store: RunStore | None = None, writer: Writer | None = None) -> F
             raise HTTPException(422, e.errors(include_url=False, include_context=False)) from e
         except StoreError as e:
             raise HTTPException(422, str(e)) from e
-        if "present.jpg" not in files:
-            raise HTTPException(422, "missing present.jpg part")
+        if "closeup.jpg" not in files:
+            raise HTTPException(422, "missing closeup.jpg part")
         rel = await run_in_threadpool(
-            store.save_sample, sm.run_id, sm.model_dump(mode="json"), files["present.jpg"]
+            store.save_sample, sm.run_id, sm.model_dump(mode="json"), files["closeup.jpg"]
         )
         event(
             sm.run_id,

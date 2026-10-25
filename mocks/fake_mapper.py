@@ -269,17 +269,17 @@ def create_app(
             sm = SampleJson.model_validate(meta)
         except ValidationError as e:
             raise HTTPException(422, e.errors(include_url=False)) from e
-        if "present.jpg" not in files:
-            raise HTTPException(422, "missing present.jpg part")
+        if "closeup.jpg" not in files:
+            raise HTTPException(422, "missing closeup.jpg part")
         run_id = _check_id(sm.run_id, "run_id")
         sample_id = _check_id(sm.sample_id, "sample_id")
         rel_dir = f"runs/{run_id}/samples/{sample_id}"
         out = root / rel_dir
         out.mkdir(parents=True, exist_ok=True)
         (out / "sample.json").write_text(sm.model_dump_json(indent=2), encoding="utf-8")
-        (out / "present.jpg").write_bytes(files["present.jpg"])
+        (out / "closeup.jpg").write_bytes(files["closeup.jpg"])
         log(run_id, "sample_stored", f"fake mapper stored {sample_id}", {"sample_id": sample_id})
-        return SampleReply(ok=True, url=url_for(f"{rel_dir}/present.jpg"))
+        return SampleReply(ok=True, url=url_for(f"{rel_dir}/closeup.jpg"))
 
     @app.post("/fuse/{run_id}")
     def fuse(run_id: str) -> dict:

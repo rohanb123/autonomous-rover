@@ -29,7 +29,6 @@ from marsrover_shared.schemas import (
     Pose,
     SampleJson,
     SampleReply,
-    ScoopState,
     StationJson,
     Telemetry,
 )
@@ -68,8 +67,8 @@ class StubRover:
         self.fail: dict[str, str] = {}  # op -> error code to reply with
         self.hold_station = asyncio.Event()  # cleared = station blocks (tests pause/stop)
         self.hold_station.set()
-        self.hold_scoop = asyncio.Event()  # cleared = scoop blocks (tests skip/come_back)
-        self.hold_scoop.set()
+        self.hold_sample = asyncio.Event()  # cleared = sample blocks (skip/come_back)
+        self.hold_sample.set()
         self.lost: set[tuple[float, float]] = set()  # rock xy whose approach loses the target
         self.lose_first = False  # the first approached target is lost
         self.pose_resets: list[tuple] = []  # set_pose calls received
@@ -115,7 +114,7 @@ class StubRover:
                     state="ESTOP" if self.estop else "IDLE",
                     estop=self.estop,
                     imu=Imu(ax=0, ay=0, az=9.8, gz_dps=0),
-                    scoop=ScoopState(pose="STOW", us=[1500, 1500]),
+                    range_m=0.42,
                     cpu_temp_c=50.0,
                     queue_len=0,
                     uplink_backlog=0,
@@ -143,9 +142,9 @@ class StubRover:
         result = self._apply(cmd)
         if cmd.op == "station":
             await self.hold_station.wait()
-        if cmd.op == "scoop":
-            await self.hold_scoop.wait()
-        if self.mapper_url and cmd.op in ("station", "scoop"):
+        if cmd.op == "sample":
+            await self.hold_sample.wait()
+        if self.mapper_url and cmd.op in ("station", "sample"):
             try:
                 result = await self._publish(cmd, result)
             except Exception as e:
@@ -185,21 +184,19 @@ class StubRover:
                 return {"in_zone": False, "pose": self.pose().model_dump(), "offset_px": [99, 99]}
             dx, dy = a["x"] - self.x, a["y"] - self.y
             d = math.hypot(dx, dy)
-            if d > 0.12:  # stop 12 cm short, facing the rock: scoop zone
+            if d > 0.12:  # stop 12 cm short: close-up range
                 self.x += dx * (d - 0.12) / d
                 self.y += dy * (d - 0.12) / d
             self.heading = math.degrees(math.atan2(dy, dx))
             return {"in_zone": True, "pose": self.pose().model_dump(), "offset_px": [0, 0]}
-        elif cmd.op == "scoop":
+        elif cmd.op == "sample":
             return {
-                "present_image": f"http://stub/present/{a['sample_id']}.jpg",
+                "image_url": f"http://stub/closeup/{a['sample_id']}.jpg",
                 "uploaded": True,
                 "pose": self.pose().model_dump(),
             }
         elif cmd.op == "snapshot":
             return {"url": "http://stub/snapshot.jpg"}
-        elif cmd.op == "dump":
-            return {"ok": True}
         return {"pose": self.pose().model_dump()}
 
     def _station(self, station_id: str, n_views: int = 8, step_deg: float = 45.0) -> dict:
@@ -312,14 +309,14 @@ class StubRover:
         body = meta.model_dump(mode="json")
         files = [
             ("sample.json", ("sample.json", json.dumps(body), "application/json")),
-            ("present.jpg", ("present.jpg", self._jpeg(), "image/jpeg")),
+            ("closeup.jpg", ("closeup.jpg", self._jpeg(), "image/jpeg")),
         ]
         resp = await self._http.post("/ingest/sample", files=files)
         if resp.status_code != 200:
             raise RuntimeError(f"ingest/sample {resp.status_code}: {resp.text[:300]}")
         reply = SampleReply.model_validate(resp.json())
         out = dict(result)
-        out["present_image"] = reply.url
+        out["image_url"] = reply.url
         out["uploaded"] = True
         return out
 
@@ -363,7 +360,7 @@ class StubMapper:
 
 class StubVision:
     """Deterministic /score: rocks further from home look more novel; same rock, same embedding.
-    /analyze returns the golden assay; `empty[cand_id] = n` makes the first n scoops empty."""
+    /analyze returns the golden assay; `empty[cand_id] = n` makes the first n close-ups unusable."""
 
     def __init__(self) -> None:
         self.calls = 0
@@ -380,15 +377,13 @@ class StubVision:
         if self.analyzed.count(req.cand_id) <= self.empty.get(req.cand_id, 0):
             return AnalysisResult(
                 sample_id=req.sample_id,
-                scoop_has_item=False,
                 label="",
                 confidence=0.0,
-                caption="Empty scoop.",
+                caption="Target not in frame.",
                 simulated=True,
             )
         return AnalysisResult(
             sample_id=req.sample_id,
-            scoop_has_item=True,
             label="float_rock",
             confidence=0.62,
             caption="A small dark rock.",

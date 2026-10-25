@@ -75,21 +75,18 @@ def test_analyze_uses_real_bradford_sim(client):
     body = client.post("/analyze", json=_analyze_req(1, 0.63)).json()
     res = AnalysisResult.model_validate(body)
     assert res.simulated is True
-    if res.scoop_has_item:
+    if res.assay is not None:
         assert body["assay"] == simulate("a_0001", RUN, 0.63)
         assert res.assay.seed == 3896889563
     else:
         assert "assay" not in body
 
 
-def test_empty_scoops_omit_assay_and_both_paths_occur(client):
-    seen = set()
-    for i in range(1, 61):
+def test_every_analysis_carries_an_assay(client):
+    """Contract 2.0.0: there is no empty scoop, so the assay is always produced."""
+    for i in range(8):
         body = client.post("/analyze", json=_analyze_req(i)).json()
-        AnalysisResult.model_validate(body)
-        seen.add(body["scoop_has_item"])
-        assert ("assay" in body) == body["scoop_has_item"]
-    assert seen == {True, False}
+        assert "assay" in body and body["assay"] is not None
 
 
 def test_analyze_writes_events_jsonl(client, tmp_path):

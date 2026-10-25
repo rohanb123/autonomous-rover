@@ -47,7 +47,7 @@ timeouts_s:
   heartbeat_loss_stop: 1.0   # only while moving
   station: 60
   approach: 45
-  scoop: 30
+  sample: 30
   clock_sync_tolerance: 0.05
 
 

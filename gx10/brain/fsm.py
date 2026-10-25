@@ -4,7 +4,7 @@ SURVEY: for each station in station_plan: turn + drive there, `station`, score t
 with vision /score, then dedupe → exclusion → candidate rows → top-k ranks.
 PLAN: nearest-neighbour route over the top-k → visit tasks; suggest mode waits for approve.
 INVESTIGATE: nearest open top-k target first, re-planned from the new pose after every visit:
-approach → scoop → /analyze (one retry on an empty scoop) → dump → mark_visited → add_analysis
+approach → sample → /analyze (one retry if the target is not in frame) → mark_visited → add_analysis
 → exclusion → re-rank. Stops after k attempts, when nothing is left, on come_back or time up.
 RETURN: drive home, face +x → end_run → mapper /fuse → DONE.
 Controls: pause/resume (between steps), skip, come_back, stop, E-STOP, approve.
@@ -70,7 +70,6 @@ class Overhead(Protocol):
 # Candidate status after a visit, mirroring the mark_visited reducer.
 STATUS_AFTER = {
     "sampled": "visited",
-    "empty_scoop": "visited",
     "unreachable": "failed",
     "skipped": "skipped",
 }
@@ -518,27 +517,30 @@ class RunFSM:
             self._record_visit(c, "skipped", note="look-only mission: photographed, not sampled")
             return
         sample_id = self.ids.next("a")
-        analysis, image_url, outcome = None, "", "empty_scoop"
+        analysis, image_url, outcome = None, "", "skipped"
         for attempt in (1, 2):
             if not await self._approach(c):
                 self._record_visit(c, "unreachable", note="lost target on approach")
                 return
             await self._checkpoint()
             try:
-                res = await self._cmd("scoop", {"sample_id": sample_id})
-                image_url = res.get("present_image", "")
+                res = await self._cmd("sample", {"sample_id": sample_id})
+                image_url = res.get("image_url", "")
             except RoverError as e:
-                if e.code != "E_SCOOP":
+                if e.code != "E_CAMERA":
                     raise
-                self.db.event("scoop", f"{c.cand_id}: scoop failed ({e.msg})", "warn")
+                self.db.event("sample", f"{c.cand_id}: close-up failed ({e.msg})", "warn")
                 image_url = ""
             analysis = await self._analyze(c, sample_id, image_url) if image_url else None
-            await self._cmd("dump")
-            if analysis is not None and analysis.scoop_has_item:
+            # Nothing to dump and no scoop to come up empty (contract 2.0.0). The
+            # success condition is a close-up vision could actually assay: it
+            # returns an AnalysisResult with assay=None when the target is not in
+            # frame, and treating that as success would kill the retry path.
+            if analysis is not None and analysis.assay is not None:
                 outcome = "sampled"
                 break
             if attempt == 1:
-                self.db.event("scoop", f"{c.cand_id}: empty scoop, retrying once", "warn")
+                self.db.event("sample", f"{c.cand_id}: no usable close-up, retrying once", "warn")
         visit = self._record_visit(c, outcome)
         self.db.analysis(self.run_id, analysis, sample_id, c.cand_id, visit.visit_id, image_url)
         if analysis and analysis.assay:
@@ -550,7 +552,7 @@ class RunFSM:
             )
 
     async def _approach(self, c: Candidate) -> bool:
-        """True when the target is in the scoop zone; False on E_LOST_TARGET / not in zone."""
+        """True when the target is in close-up range; False on E_LOST_TARGET / out of range."""
         await self._go_to_near(c.x, c.y)
         try:
             res = await self._cmd("approach", {"cand_id": c.cand_id, "x": c.x, "y": c.y})

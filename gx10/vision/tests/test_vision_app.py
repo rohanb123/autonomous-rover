@@ -119,7 +119,7 @@ def test_analyze_labels_and_attaches_simulated_assay(client):
            "image_url": "http://m/present.jpg", "interest_score": 0.63}  # fmt: skip
     body = client.post("/analyze", json=req).json()
     res = AnalysisResult.model_validate(body)
-    assert res.simulated is True and res.scoop_has_item is True  # placeholder (option A)
+    assert res.simulated is True and res.assay is not None
     assert body["assay"] == simulate("a_0001", RUN, 0.63)  # golden vector path
     assert res.label in {"float_rock", "layered", "veined", "sand", "bedrock", "pebble"}
     assert 0 <= res.confidence <= 1 and res.caption

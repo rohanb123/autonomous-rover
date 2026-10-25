@@ -22,7 +22,6 @@ export const AnalysisRecord = __t.object("AnalysisRecord", {
   label: __t.string(),
   confidence: __t.f64(),
   caption: __t.string(),
-  scoopHasItem: __t.bool(),
   assayType: __t.string(),
   a595: __t.f64(),
   concentration: __t.f64(),
@@ -183,7 +182,7 @@ export const Telemetry = __t.object("Telemetry", {
   batteryV: __t.f64(),
   cpuTempC: __t.f64(),
   imuJson: __t.string(),
-  scoopPose: __t.string(),
+  rangeM: __t.f64(),
   uplinkBacklog: __t.u32(),
 });
 export type Telemetry = __Infer<typeof Telemetry>;

@@ -1,4 +1,4 @@
-"""Placeholder analysis of a scooped sample: label, confidence, caption (docs/roles/P3 §4).
+"""Placeholder analysis of a sampled target: label, confidence, caption (docs/roles/P3 §4).
 
 The label comes from the category head on the PRESENT photo. Captions are templates for now;
 an Ollama vision model can replace them later (config/models.yaml ollama.caption_model, I5,

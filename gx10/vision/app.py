@@ -192,24 +192,22 @@ def create_app(models: VisionModels | None = None, fetch: Fetcher | None = None)
             return analyze(img, emb[0], m.heads)
 
         info = await run_in_threadpool(compute)
-        # UNVERIFIED placeholder (P3 decision 2026-10-24, option A): the real scoop_check needs
-        # the empty-scoop reference photo and the scoop ROI, which aren't specified yet
-        # (docs/roles/P3 §4 scoop_check). Until then every scoop counts as holding an item.
-        has_item = True
+        # Contract 2.0.0 removed the scoop, so there is no empty-bucket check left to
+        # do: the question is whether the close-up is usable, and a frame that
+        # reached here is. The assay is always produced.
         res = AnalysisResult(
             sample_id=req.sample_id,
-            scoop_has_item=has_item,
             label=info["label"],
             confidence=info["confidence"],
             caption=info["caption"],
             simulated=True,
-            assay=simulate(req.sample_id, req.run_id, req.interest_score) if has_item else None,
+            assay=simulate(req.sample_id, req.run_id, req.interest_score),
         )
         eventlog.log(
             req.run_id, SRC, "info", "analysis",
             f"{req.sample_id}: {res.label} ({res.confidence:.2f}), assay "
-            f"{res.assay.verdict if res.assay else 'none'} (scoop check: placeholder)",
-            {"sample_id": req.sample_id, "cand_id": req.cand_id, "scoop_check": "placeholder"},
+            f"{res.assay.verdict if res.assay else 'none'}",
+            {"sample_id": req.sample_id, "cand_id": req.cand_id},
         )  # fmt: skip
         return res
 

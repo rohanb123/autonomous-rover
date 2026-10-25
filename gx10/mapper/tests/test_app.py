@@ -180,7 +180,7 @@ def _sample_files(meta=None, with_jpg=True):
     }
     files = [("sample.json", ("sample.json", json.dumps(meta), "application/json"))]
     if with_jpg:
-        files.append(("present.jpg", ("present.jpg", noise_jpg(640, 480), "image/jpeg")))
+        files.append(("closeup.jpg", ("closeup.jpg", noise_jpg(640, 480), "image/jpeg")))
     return files
 
 
@@ -188,8 +188,8 @@ def test_sample_upload(env):
     client, writer, root = env
     r = client.post("/ingest/sample", files=_sample_files())
     reply = SampleReply.model_validate(r.json())
-    assert reply.url == f"{PUBLIC}/files/runs/{RUN}/samples/a_0001/present.jpg"
-    assert (root / "runs" / RUN / "samples" / "a_0001" / "present.jpg").is_file()
+    assert reply.url == f"{PUBLIC}/files/runs/{RUN}/samples/a_0001/closeup.jpg"
+    assert (root / "runs" / RUN / "samples" / "a_0001" / "closeup.jpg").is_file()
     assert writer.by("log_event")[0][4] == "sample_stored"
     assert client.get(reply.url.removeprefix(PUBLIC)).status_code == 200
 

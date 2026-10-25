@@ -92,8 +92,7 @@ def test_full_campaign_survey_to_done():
             assert g.fsm.state == "DONE"
             assert r.ops.count("station") == 5
             assert len(db.cands) == 5 and any(len(c.prop_ids) > 1 for c in db.cands.values())
-            assert outcomes(db) == ["sampled"] * 3 and r.ops.count("scoop") == 3
-            assert r.ops.count("dump") == 3
+            assert outcomes(db) == ["sampled"] * 3 and r.ops.count("sample") == 3
             assert all(a.assay.seed == 3896889563 for _, a, _ in db.analyses)
             visited_ids = {v.cand_id for v in db.visits}
             fsm_cands = g.fsm.cands  # the mark_visited reducer updates the real DB row
@@ -112,18 +111,21 @@ def test_full_campaign_survey_to_done():
     run(go())
 
 
-def test_empty_scoop_retries_once_then_records_empty():
+def test_an_unusable_closeup_retries_once_then_records_skipped():
+    """Contract 2.0.0 has no empty scoop, but it has an unusable close-up: vision
+    returns assay=None when the target is not in frame, and that still earns one retry."""
+
     async def go():
         async with StubRover() as r, Rig(r) as g:
-            g.vision.empty_first = 2  # the first target comes up empty twice
+            g.vision.empty_first = 2  # the first target is not in frame twice
             await g.fsm.start_mission(MISSION, IdGen())
             first = g.vision.analyzed[0]
-            empty = [v for v in g.db.visits if v.outcome == "empty_scoop"]
-            assert [v.cand_id for v in empty] == [first]
+            skipped = [v for v in g.db.visits if v.outcome == "skipped"]
+            assert [v.cand_id for v in skipped] == [first]
             assert g.vision.analyzed.count(first) == 2  # one retry
-            cand, analysis, _ = next(a for a in g.db.analyses if a[0] == first)
-            assert analysis is not None and not analysis.scoop_has_item and analysis.assay is None
-            assert len(g.db.visits) == 3  # empty counts toward k
+            _, analysis, _ = next(a for a in g.db.analyses if a[0] == first)
+            assert analysis is not None and analysis.assay is None
+            assert len(g.db.visits) == 3  # an unusable close-up still counts toward k
 
     run(go())
 
@@ -142,12 +144,12 @@ def test_lost_target_is_unreachable_and_counts():
 def test_skip_is_replaced_by_the_next_best():
     async def go():
         async with StubRover() as r, Rig(r) as g:
-            r.hold_scoop.clear()
+            r.hold_sample.clear()
             task = g.fsm.start_mission(MISSION, IdGen())
-            await _wait(lambda: "scoop" in r.ops)
+            await _wait(lambda: "sample" in r.ops)
             first = g.fsm.active_cand
             g.fsm.skip()
-            r.hold_scoop.set()
+            r.hold_sample.set()
             await task
             assert g.db.visits[0].cand_id == first and g.db.visits[0].outcome == "skipped"
             assert outcomes(g.db).count("sampled") == 3  # the skip was replaced
@@ -161,12 +163,12 @@ def test_skip_is_replaced_by_the_next_best():
 def test_come_back_mid_visit_requeues_and_returns_home():
     async def go():
         async with StubRover() as r, Rig(r) as g:
-            r.hold_scoop.clear()
+            r.hold_sample.clear()
             task = g.fsm.start_mission(MISSION, IdGen())
-            await _wait(lambda: "scoop" in r.ops)
+            await _wait(lambda: "sample" in r.ops)
             target = g.fsm.active_cand
             g.fsm.come_back()
-            r.hold_scoop.set()
+            r.hold_sample.set()
             await task
             assert g.fsm.state == "DONE" and math.hypot(r.x, r.y) < 0.01
             assert g.db.cands[target].status == "queued" and not g.db.visits
@@ -179,7 +181,7 @@ def test_suggest_mode_waits_for_approval():
         async with StubRover() as r, Rig(r) as g:
             task = g.fsm.start_mission({**MISSION, "mode": "suggest"}, IdGen())
             await _wait(lambda: g.fsm.state == "AWAIT_APPROVAL")
-            assert "scoop" not in r.ops
+            assert "sample" not in r.ops
             with pytest.raises(NotNow):
                 g.fsm.approve("m_0009", True)
             g.fsm.approve("m_0001", True)
@@ -200,7 +202,7 @@ def test_look_only_and_time_up():
     async def go():
         async with StubRover() as r, Rig(r) as g:
             await g.fsm.start_mission({**MISSION, "sample": False}, IdGen())
-            assert "scoop" not in r.ops and r.ops.count("snapshot") == 3
+            assert "sample" not in r.ops and r.ops.count("snapshot") == 3
             assert outcomes(g.db) == ["skipped"] * 3 and not g.db.analyses
             assert g.fsm.state == "DONE"
 

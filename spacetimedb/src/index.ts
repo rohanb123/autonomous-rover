@@ -131,7 +131,7 @@ export const insert_pose = spacetimedb.reducer(
 export const insert_telemetry = spacetimedb.reducer(
   {
     runId: t.string(), tUnix: t.f64(), state: t.string(), batteryV: t.f64(), cpuTempC: t.f64(),
-    imuJson: t.string(), scoopPose: t.string(), uplinkBacklog: t.u32(),
+    imuJson: t.string(), rangeM: t.f64(), uplinkBacklog: t.u32(),
   },
   (ctx, a) => {
     requireWriter(ctx);
@@ -215,7 +215,6 @@ export const upsert_candidate = spacetimedb.reducer(
 
 const CANDIDATE_STATUS_FOR_OUTCOME: Record<string, string> = {
   sampled: 'visited',
-  empty_scoop: 'visited',
   skipped: 'skipped',
   unreachable: 'failed',
 };
@@ -241,7 +240,7 @@ export const mark_visited = spacetimedb.reducer(
 export const add_analysis = spacetimedb.reducer(
   {
     runId: t.string(), sampleId: t.string(), candId: t.string(), visitId: t.string(), tUnix: t.f64(),
-    imageUrl: t.string(), label: t.string(), confidence: t.f64(), caption: t.string(), scoopHasItem: t.bool(),
+    imageUrl: t.string(), label: t.string(), confidence: t.f64(), caption: t.string(),
     assayType: t.string(), a595: t.f64(), concentration: t.f64(), units: t.string(), verdict: t.string(),
     inLinearRange: t.bool(), standardCurveParams: t.string(), simulated: t.bool(), seed: t.u32(),
     modelVersion: t.string(),

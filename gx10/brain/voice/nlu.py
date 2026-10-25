@@ -66,7 +66,7 @@ _SCHEMA = {
         "radius_m": {"type": "number", "description": "survey radius in metres"},
         "k": {"type": "integer", "description": "how many rocks to investigate"},
         "categories": {"type": "array", "items": {"type": "string", "enum": CATEGORIES}},
-        "sample": {"type": "boolean", "description": "scoop the rocks (true) or only look"},
+        "sample": {"type": "boolean", "description": "photograph each rock close up, or only look"},
         "return_home": {"type": "boolean"},
         "max_duration_s": {"type": "number"},
         "mode": {"type": "string", "enum": ["act", "suggest"]},
@@ -91,14 +91,14 @@ _SCHEMA = {
 _SYSTEM = """\
 You turn a spoken instruction for a small autonomous science rover into mission parameters.
 The rover surveys around its start point, picks the most interesting rocks, optionally
-scoops them, and can return home.
+photographs them close up, and can return home.
 Rules:
 - radius_m: survey radius in metres, 0.3 to 3.0. "a meter and a half" = 1.5. cm -> metres.
 - k: number of rocks to investigate, 1 to 8.
 - categories: rock types the speaker asked for, from the enum. ["any"] if none were named.
   float_rock = loose rock lying on the surface; layered = visible layers; veined = veins;
   pebble = small stones.
-- sample: false only if they said not to scoop/sample, or to only look/survey.
+- sample: false only if they said not to sample, or to only look/survey.
 - mode: "suggest" if they want to approve the plan first, else "act".
 - For every field the speaker did NOT state, use the default below and add one
   assumption line saying so.

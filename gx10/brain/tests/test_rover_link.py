@@ -36,16 +36,16 @@ def test_cmd_done_telemetry_and_heartbeat():
 def test_error_codes_and_ack_timeout():
     async def go():
         async with StubRover() as r:
-            r.fail["scoop"] = "E_SCOOP"
-            r.no_ack.add("dump")
+            r.fail["sample"] = "E_CAMERA"
+            r.no_ack.add("stop")
             link = RoverLink(r.url)
             link.start()
             await _up(link)
             with pytest.raises(RoverError) as e:
-                await link.cmd("scoop", {"sample_id": "a_0001"})
-            assert e.value.code == "E_SCOOP"
+                await link.cmd("sample", {"sample_id": "a_0001"})
+            assert e.value.code == "E_CAMERA"
             with pytest.raises(RoverError) as e:
-                await link.cmd("dump")
+                await link.cmd("stop")
             assert e.value.code == "E_TIMEOUT" and "no ack" in e.value.msg
             await link.stop()
 

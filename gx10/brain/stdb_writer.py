@@ -143,13 +143,13 @@ class BrainDb:
         visit_id: str,
         image_url: str,
     ) -> None:
-        """add_analysis (docs/02 §6). No assay (empty scoop) -> the documented sentinels."""
+        """add_analysis (docs/02 §6). No assay -> the documented sentinels."""
         t = time.time()
         head = [run_id, sample_id, cand_id, visit_id, t, image_url]
         if a is None:
             body = ["", 0.0, "", False]
         else:
-            body = [a.label, a.confidence, a.caption, a.scoop_has_item]
+            body = [a.label, a.confidence, a.caption]
         if a is not None and a.assay is not None:
             s = a.assay
             assay = [
@@ -187,7 +187,7 @@ class BrainDb:
             -1.0,
             tel.cpu_temp_c,
             tel.imu.model_dump_json(),
-            tel.scoop.pose,
+            tel.range_m if tel.range_m is not None else -1.0,
             tel.uplink_backlog,
         )
 

@@ -70,7 +70,6 @@ const analysis: AnalysisRecord = {
   label: 'float_rock',
   confidence: 0.62,
   caption: 'A small angular dark rock fragment with a smooth face.',
-  scoopHasItem: true,
   assayType: 'bradford_sim',
   a595: 0.2585,
   concentration: 282.1,

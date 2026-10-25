@@ -171,11 +171,11 @@ def test_sample_upload(env):
     }
     files = [
         ("sample.json", ("sample.json", json.dumps(meta), "application/json")),
-        ("present.jpg", ("present.jpg", _jpg(), "image/jpeg")),
+        ("closeup.jpg", ("closeup.jpg", _jpg(), "image/jpeg")),
     ]
     reply = SampleReply.model_validate(client.post("/ingest/sample", files=files).json())
-    assert reply.url == f"{PUBLIC}/files/runs/{RUN}/samples/a_0001/present.jpg"
-    assert (root / "runs" / RUN / "samples" / "a_0001" / "present.jpg").is_file()
+    assert reply.url == f"{PUBLIC}/files/runs/{RUN}/samples/a_0001/closeup.jpg"
+    assert (root / "runs" / RUN / "samples" / "a_0001" / "closeup.jpg").is_file()
     assert client.post("/ingest/sample", files=files[:1]).status_code == 422
 
 

@@ -2,7 +2,7 @@
 
 Layout (P3 owns it, docs/00 §2 "Runtime data/"), relative to the data root:
     runs/<run_id>/stations/<station_id>/station.json, kf_*.jpg, bev.png, crop_p_*.jpg
-    runs/<run_id>/samples/<sample_id>/sample.json, present.jpg
+    runs/<run_id>/samples/<sample_id>/sample.json, closeup.jpg
     runs/<run_id>/events.jsonl                      (appended by marsrover_shared.eventlog)
 
 The data root is $MARSROVER_DATA_DIR, else the repo's data/ (a symlink to /data on the GX10).
@@ -89,10 +89,10 @@ class RunStore:
         return self._write_dir(rel, "station.json", station, files)
 
     def save_sample(self, run_id: str, sample: dict, jpg: bytes) -> str:
-        """Store a scoop photo; returns present.jpg's path relative to the data root."""
+        """Store a close-up photo; returns closeup.jpg's path relative to the data root."""
         rel = self.sample_dir(run_id, sample["sample_id"])
-        self._write_dir(rel, "sample.json", sample, {"present.jpg": jpg})
-        return f"{rel}/present.jpg"
+        self._write_dir(rel, "sample.json", sample, {"closeup.jpg": jpg})
+        return f"{rel}/closeup.jpg"
 
     def has_station(self, run_id: str, station_id: str) -> bool:
         return (self.root / self.station_dir(run_id, station_id) / "station.json").is_file()

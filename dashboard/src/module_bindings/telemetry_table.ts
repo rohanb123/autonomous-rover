@@ -18,6 +18,6 @@ export default __t.row({
   batteryV: __t.f64().name("battery_v"),
   cpuTempC: __t.f64().name("cpu_temp_c"),
   imuJson: __t.string().name("imu_json"),
-  scoopPose: __t.string().name("scoop_pose"),
+  rangeM: __t.f64().name("range_m"),
   uplinkBacklog: __t.u32().name("uplink_backlog"),
 });

@@ -101,7 +101,7 @@ def _mission(run_id: str) -> dict:
 
 
 def _run_campaign(tmp_path, monkeypatch, *, empty_rate: float, outcomes: list[str], notes: str):
-    """One full campaign. empty_rate=0 keeps every scoop; 1 forces the retry path."""
+    """One full campaign. empty_rate=0 keeps every close-up; 1 forces the retry path."""
     monkeypatch.setenv("MARSROVER_DATA_DIR", str(tmp_path))
 
     async def go():
@@ -155,7 +155,7 @@ def _run_campaign(tmp_path, monkeypatch, *, empty_rate: float, outcomes: list[st
             )
             assert all(len(emb) == 16 for emb in fsm.embeddings.values())
             if empty_rate == 1:
-                assert rover.ops.count("scoop") == 6  # one retry on each of k targets
+                assert rover.ops.count("sample") == 6  # one retry on each of k targets
 
             async with httpx.AsyncClient() as http:
                 for c in fsm.cands.values():
@@ -192,7 +192,6 @@ def _run_campaign(tmp_path, monkeypatch, *, empty_rate: float, outcomes: list[st
                 if empty_rate == 0:
                     interest = min(max(fsm.cands[rec["cand_id"]].score, 0.0), 1.0)
                     expected = simulate(rec["sample_id"], run_id, interest)
-                    assert rec["scoop_has_item"] is True
                     assert rec["assay_type"] == "bradford_sim"
                     assert rec["verdict"] == expected["verdict"]
                     assert rec["seed"] == expected["seed"]
@@ -200,7 +199,7 @@ def _run_campaign(tmp_path, monkeypatch, *, empty_rate: float, outcomes: list[st
                     assert rec["concentration"] == expected["concentration"]
                     assert rec["model_version"] == expected["model_version"]
                 else:
-                    assert rec["scoop_has_item"] is False and rec["label"] == "empty"
+                    assert rec["label"] == "empty"
                     assert rec["assay_type"] == "" and rec["verdict"] == ""
                     assert rec["a_595"] == -1 and rec["concentration"] == -1
                     assert rec["seed"] == 0 and rec["model_version"] == ""
@@ -229,11 +228,11 @@ def test_campaign_against_p3_mocks_lands_in_stdb(tmp_path, monkeypatch):
     )
 
 
-def test_empty_scoops_against_p3_vision_retry_once(tmp_path, monkeypatch):
+def test_unusable_closeups_against_p3_vision_retry_once(tmp_path, monkeypatch):
     _run_campaign(
         tmp_path,
         monkeypatch,
         empty_rate=1.0,
-        outcomes=["empty_scoop"] * 3,
-        notes="p3 empty scoops",
+        outcomes=["skipped"] * 3,
+        notes="p3 unusable close-ups",
     )

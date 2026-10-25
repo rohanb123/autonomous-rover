@@ -75,7 +75,7 @@ export default function PinDetailDrawer({ candidate, visit, analysis, keyframe, 
             <h3>Analysis</h3>
             <p>
               {analysis.label || '—'}
-              {analysis.scoopHasItem ? ` (${analysis.confidence.toFixed(2)})` : ' · empty scoop'}
+              {` (${analysis.confidence.toFixed(2)})`}
             </p>
             {analysis.caption && <p className="meta">{analysis.caption}</p>}
           </section>

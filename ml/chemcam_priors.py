@@ -18,7 +18,7 @@ Method (docs/03 §3):
 5. prior[c] = raw[c] ** 0.5 (square-root flattening, P3 decision 2026-10-24). Bedrock is ~6×
    every other category in the raw shares (and ~98% of AEGIS picks), so unflattened priors
    would make the category term ignore everything but bedrock, including the pebbles the
-   rover can actually scoop. Flattening keeps the scientists' ranking. raw is kept in the
+   rover can actually reach. Flattening keeps the scientists' ranking. raw is kept in the
    detail file.
 
 Mapping decisions reviewed by P3 (2026-10-24): generic "Rock" stays unmapped; blind targets
