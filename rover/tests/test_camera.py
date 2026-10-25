@@ -697,7 +697,12 @@ def test_the_csi_path_asks_the_isp_to_rotate_when_it_can(monkeypatch):
     monkeypatch.setitem(sys.modules, "libcamera", types.SimpleNamespace(Transform=Transform))
 
     def create_video_configuration(main, lores=None, transform=None):
-        return {"main": dict(main), "lores": dict(lores or {}), "kind": "video", "transform": transform}
+        return {
+            "main": dict(main),
+            "lores": dict(lores or {}),
+            "kind": "video",
+            "transform": transform,
+        }
 
     fake = FakePicam2()
     fake.create_video_configuration = create_video_configuration
@@ -709,8 +714,10 @@ def test_the_csi_path_asks_the_isp_to_rotate_when_it_can(monkeypatch):
 
 
 def test_the_usb_path_rotates_when_asked():
-    import numpy as np
+    pytest.importorskip("cv2")
     from dataclasses import replace
+
+    import numpy as np
 
     class Cap:
         def read(self):
