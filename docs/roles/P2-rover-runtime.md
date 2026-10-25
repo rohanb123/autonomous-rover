@@ -132,18 +132,33 @@ def run_station(station_id: str, n_views: int, step_deg: float) -> dict   # retu
 # approach.py
 def approach(cand_xy: tuple[float,float], timeout_s: float = 45) -> dict  # {in_zone, pose, offset_px}
 
-# local_store.py
+# local_store.py  (BUILT)
 class LocalStore:
-    def __init__(self, root: str = "runs"): ...                # runs/<run>/stations/s_xxxx/{station.json,kf_*.jpg,bev.png,crop_*.jpg}
-    def save_station(self, run_id: str, station: dict, files: dict[str, bytes]) -> str
-    def save_sample(self, run_id: str, sample: dict, jpg: bytes) -> str
-    def pending_uploads(self) -> list[str]
+    def __init__(self, root: str | Path = "data/rover"): ...   # <root>/<run>/stations/s_xxxx/, <root>/<run>/samples/a_xxxx/
+    def save_station(self, station: StationJson, files: Mapping[str, bytes]) -> str   # rel path; atomic (tmp dir + rename)
+    def save_sample(self, sample: SampleJson, jpg: bytes) -> str
+    def load(self, rel: str) -> Bundle; def pending_uploads(self) -> list[str]        # oldest first
+    def mark_uploaded / mark_failed / mark_rejected(rel, ...); backlog: int
+# The queue IS <root>/index.sqlite, so unsent bundles survive a reboot.
 
-# uploader.py
+# uploader.py  (BUILT; httpx + pydantic only, fake_rover imports `multipart` from it)
+def multipart(meta_name, meta_json, files) -> list[tuple]       # doc 00 6.4-6.5 wire format
 class Uploader:
-    def upload_station(self, path: str) -> dict                # POST mapper /ingest/station; returns mapper reply
-    def upload_sample(self, path: str) -> dict
-    def retry_loop(self) -> None                               # background; exponential backoff, max 30 s
+    def __init__(self, store, mapper_url=DEFAULT_MAPPER, emit=None, *, timeout_s=10, ...): ...
+    def upload_station(self, rel: str) -> MapperStationReply  # ONE try; UploadFailed -> op still answers done
+    def upload_sample(self, rel: str) -> SampleReply
+    def start(); def stop(); def retry_loop()                  # thread; backoff 1 s doubling to 30 s
+    backlog: int                                               # -> telemetry.uplink_backlog
+# A 4xx marks the bundle rejected (kept on disk, not retried) so it can't block the queue.
+
+# snapshot_server.py  (BUILT) -- :8080 on the runtime's own loop; lores stream only, never main
+def make_app(camera) -> FastAPI      # /snapshot.jpg, /stream.mjpg (hw MJPEG, else sw loop), /health
+async def serve(camera, host, port)  # producer runs only while someone watches
+
+# linkcheck.py  (BUILT) -- python -m rover.linkcheck [--only pi|gx10] ; exit 1 on any FAIL
+# Every doc 00 section 3 port, telemetry schema, WS RTT (bad-op probe, side-effect free),
+# clock offset NTP-style from the same probe (<= 50 ms), mapper /health.
+# Deploy: rover/deploy/ (setup_pi.sh, rover.service, chrony, README).
 
 # safety.py  (BUILT)
 def tilt_deg(imu: dict) -> float   # atan2(hypot(ax,ay), az), so upside-down reads ~180 not ~0
@@ -177,9 +192,11 @@ def serve_rover(backend: Backend, host: str, port: int)
 # main.py  (BUILT) -- entry point
 class HardwareBackend     # implements Backend over motors/servos/camera/imu; long ops run on
                           # one ThreadPoolExecutor worker, stops come from the loop thread
-def build_backend(calib: Calib, modes: dict[str, str]) -> HardwareBackend
+def build_backend(calib: Calib, modes: dict[str, str], *, store_root=None,
+                  mapper_url=DEFAULT_MAPPER) -> HardwareBackend
 #   python rover/rover/main.py --motors {auto,gpio,sim,off} --servos {auto,pca9685,off}
 #                              --imu {auto,off} --camera {auto,opencv,sim,off} --no-hw
+#                              --mapper URL --store DIR --snapshot-port 8080 (0 = off)
 #   Device choice is CLI/env, never calib.yaml: calibration is measured numbers that are the
 #   same on every machine, while which devices exist differs per machine and per hour.
 #   `auto` probes, logs an inventory and degrades to off; `sim` must be asked for.
