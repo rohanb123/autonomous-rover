@@ -19,7 +19,7 @@ export function draw(ctx: CanvasRenderingContext2D, cam: Camera, width: number, 
   const [xBottom, yRight] = screenToWorld(cam, width, height);
   ctx.save();
   ctx.lineWidth = 1;
-  ctx.strokeStyle = 'rgba(232, 225, 217, 0.06)';
+  ctx.strokeStyle = 'rgba(255, 255, 255, 0.06)';
   ctx.beginPath();
   for (let x = Math.floor(xBottom / step) * step; x <= xTop; x += step) {
     const [, sy] = worldToScreen(cam, x, 0);
@@ -35,7 +35,7 @@ export function draw(ctx: CanvasRenderingContext2D, cam: Camera, width: number, 
 
   // Home pad: cross at the origin with an arrow along +x (the start heading).
   const [hx, hy] = worldToScreen(cam, 0, 0);
-  ctx.strokeStyle = 'rgba(224, 122, 63, 0.8)';
+  ctx.strokeStyle = 'rgba(255, 255, 255, 0.45)';
   ctx.lineWidth = 2;
   ctx.beginPath();
   ctx.moveTo(hx - 8, hy);
@@ -49,8 +49,8 @@ export function draw(ctx: CanvasRenderingContext2D, cam: Camera, width: number, 
 
   // Scale bar, bottom-left.
   const barPx = step * cam.scale;
-  ctx.strokeStyle = '#e8e1d9';
-  ctx.fillStyle = '#e8e1d9';
+  ctx.strokeStyle = '#ffffff';
+  ctx.fillStyle = '#ffffff';
   ctx.lineWidth = 2;
   ctx.beginPath();
   ctx.moveTo(12, height - 14);

@@ -31,7 +31,7 @@ Swap order: fake_mapper → real mapper (I1), fake_vision → real vision (I2), 
 |---|---|---|---|---|
 | Start → I0 | Inventory, unknowns U-1…U-8, order parts | Pi OS, Wi-Fi, `fake_rover` | Downloads, venv, `fake_vision`, `fake_mapper` | Repo skeleton, router, STDB v0, `shared/py`, I0 run |
 | I0 → I1 | Chassis, power, TB6612 harness, I2C deck | motors, servos, imu, camera, safety, WS server | `bradford_sim` + tests, mapper ingest + tiles; ARM64 lib checks | All tables/reducers, brain skeleton, dashboard shell, `fake_brain` |
-| I1 → I2 | Mast, scoop arm, overhead stand, markers | Calibration, pose/heading, station, BEV, proposals, uploader | Priors, embeddings, heads, `/score`, `/analyze`; MapView v1 | Scoring, TopK, route, dedupe, exclusion, panels |
+| I1 → I2 | Mast, scoop arm, overhead stand, markers | Calibration, pose/heading, station, uploader | Priors, embeddings, heads, `/score`, `/analyze`; MapView v1; BEV + rock proposals on the Pi (`bev.py`, `proposals.py`, from P2) | Scoring, TopK, route, dedupe, exclusion, panels |
 | I2 → I3 | Arena, pebbles, scoop tuning with P2; arena photo session + labels | Approach, scoop sequence, overhead tracker | Few-shot training on P1's arena photos; `/fuse` (DR) | Real rover integration, scrubber, drawer, `replay_run` |
 | I3 → I4 | Hardening, strain relief, spares | VO fusion, reconnect/robustness | Posegraph, BradfordPanel/Cuvette/Chart | Voice ASR/NLU + wiring, suggest mode, failure paths |
 | I4 → I5 | Pre-flight checklist, battery rotation | Threshold tuning, bug fixes | Captions (optional), polish | Soak runs, docs to as-built, freeze |
@@ -39,5 +39,5 @@ Swap order: fake_mapper → real mapper (I1), fake_vision → real vision (I2), 
 
 ## 4. Daily rhythm
 - Stand-up at every gate (5 min: done / next / blocked).
-- `main` must always run `make test`. Feature branches merge only after the owner's tests pass.
-- A contract change needs a file in `docs/requests/`, P4's OK, a `CONTRACT_VERSION` bump, and updated copies in the role files ([AGENTS.md §3](../AGENTS.md#3-changing-a-contract)).
+- `main` must always run `make test`. A branch merges only after the whole suite passes, whoever wrote it.
+- Anyone may change a contract without approval: bump `CONTRACT_VERSION`, update the role-file copies and announce it ([AGENTS.md §3](../AGENTS.md#3-changing-a-contract)).

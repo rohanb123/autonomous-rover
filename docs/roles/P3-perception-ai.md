@@ -5,21 +5,27 @@ Make the rover **choose like a scientist** and make the result **visible**:
 - the models and priors that score rocks (`ml/`, vision `/score`);
 - the placeholder "analysis" of a scooped sample plus the **simulated Bradford assay** (`/analyze`);
 - the mapper that stores station bundles, publishes local tiles and fuses the **global map** (`mapper/`);
-- the dashboard **MapView** and **BradfordPanel**.
+- the dashboard **MapView** and **BradfordPanel**;
+- on the Pi, the **ground image** (`rover/rover/bev.py`) and **rock detection** (`rover/rover/proposals.py`), taken over from P2 on 2026-10-24.
 
 > ⚠️ Still the heaviest role (voice moved to P4, arena photos to P1). The cut list in [05](../05-unknowns-and-risks.md#risk-register) says what to drop first. If you're behind at I2, P4 takes over `dashboard/src/assay/` as a whole directory.
 
 ## 2. Scope
+> "Not yours" means another person's default area. You may still work on it without asking; warn them first (AGENTS.md §2).
+
 | Yours | Not yours |
 |---|---|
 | `ml/**`, `gx10/vision/**`, `gx10/mapper/**` | Final score formula, heap, route, dedupe, exclusion (brain, P4). You return *components* |
 | `dashboard/src/map/**`, `dashboard/src/assay/**` | Dashboard shell, panels, STDB connection (P4). You get rows via props |
-| `mocks/fake_vision.py`, `mocks/fake_mapper.py` | Rock proposals on the Pi (P2). You score them |
+| `mocks/fake_vision.py`, `mocks/fake_mapper.py` | Station capture, camera calibration (the homography), BEV visual-odometry yaw, uploads (P2). `station.py` calls your Pi modules |
 | Ollama caption-model choice (:11434), recorded in `config/models.yaml`; the arena label layout in docs/03 (P1 captures and labels the photos) | DB schema/reducers (P4). You call `upsert_keyframe`, `upsert_local_tile`, `upsert_global_tile`, `set_run_fused`, `log_event` from the mapper |
 | docs/03 | |
+| On the Pi: `rover/rover/bev.py`, `rover/rover/proposals.py`, `rover/tests/test_bev.py`, `rover/tests/test_proposals.py` (from P2, 2026-10-24) | |
 
 ## 3. Hardware / environment
 GX10 (ARM64, NVIDIA GB10, DGX OS, PyTorch preinstalled per the ASUS spec). Python 3.11+ venv with `open_clip_torch` ⚠️ (test before I0), `scikit-learn`, `pandas`, `fastapi`, `uvicorn`, `pillow`, `opencv-python-headless`, `numpy`, `httpx`. Ollama on :11434 with an optional caption VLM ⚠️ pull before the venue (template captions otherwise). No extra parts.
+
+**Pi modules** (`bev.py`, `proposals.py`) run on the rover's Raspberry Pi (ARM64) inside P2's runtime: `numpy` + `opencv-python-headless` only, no GPU, no network, no SpacetimeDB. Inputs come from P2's `calib.yaml` via `config.load_calib()` (`homography`, `bev_res_m_px = 0.005`, `bev_size_px = 360`).
 
 ## 4. Files and function signatures
 ```python
@@ -84,6 +90,19 @@ POST /fuse/{run_id}    → runs fuse_run, upsert_global_tile ×N, set_run_fused(
 GET  /files/{path}     static files under /data
 
 ```
+Pi modules (from P2, 2026-10-24; the signatures are the interface P2's `station.py` calls, see [P2 §4–§6](P2-rover-runtime.md#4-files-and-function-signatures)):
+```python
+# rover/rover/bev.py
+def warp_to_bev(img: np.ndarray, H: np.ndarray, size_px: int) -> np.ndarray
+def pixel_to_rover_xy(u: float, v: float, H: np.ndarray, res_m_px: float, size_px: int) -> tuple[float,float]
+def stitch_station(views: list[tuple[float, np.ndarray]], res_m_px: float, size_px: int) -> np.ndarray  # rotate each BEV by its heading, max-blend
+
+# rover/rover/proposals.py  ("rockster-lite": edges + contours, inspired by Rockster/AEGIS target finding)
+def find_rocks(img: np.ndarray, min_area_px: int = 80, max_area_px: int = 8000) -> list[dict]
+    # [{bbox_px:[x,y,w,h], contrast: float, solidity: float, center_px:[u,v]}]  Canny → close → findContours → filter
+```
+BEV tiles follow 00 §4: rover frame at capture, image up = rover +x, image left = rover +y, 0.005 m/px, 360 px (1.8 m). `station.py` (P2) turns `center_px` into rover xy with `pixel_to_rover_xy`, then into mission xy with the pose, and crops 96×96 around each bbox.
+
 TypeScript (props in [06 §4](../06-dashboard.md#4-repo-layout)): `map/MapView.tsx`, `map/camera.ts` (`worldToScreen`, `screenToWorld`, `fitBounds`), `map/layers/*.ts` (`draw(ctx, cam, rows)`), `assay/BradfordPanel.tsx`, `assay/Cuvette.tsx`, `assay/StandardCurveChart.tsx`, `assay/format.ts` (`fmtConc`, `fmtA595`, `verdictLabel`, `a595ToColor`).
 
 ## 5. What the brain expects from you
@@ -211,12 +230,13 @@ def simulate(sample_id: str, run_id: str = "", interest_score: float | None = No
 | by I1 | `bradford_sim.py` + tests (golden vector); mapper `/ingest/*` + thumbnails + local tiles to STDB | **I1:** a fake_rover station appears in STDB `local_map_tile` + `keyframe`; golden test green |
 | by I2 | chemcam_priors, embeddings, heads, `/score`, `/analyze` (template caption) | **I2:** real `/score` < 300 ms / 10 crops; metrics.json written |
 | by I2 | MapView (tiles, trail, pins, exclusion, stations) against fake_brain | Live map renders the fake_brain run (06 D2, D10) |
+| by I2 | Pi `bev.py` + `proposals.py` + `test_bev.py`, `test_proposals.py` (from P2, 2026-10-24) | With P2's `station.py`: a `station` produces 8 keyframes + BEV + proposals within 60 s; a 10 cm square measures 10 ± 1 cm in the BEV; `test_proposals` finds 3 dark blobs on a synthetic image |
 | by I3 | Few-shot training + eval on P1's labeled arena photos | Arena accuracy reported |
 | by I4 | `/fuse`: mosaic + global tiles (DR first, then posegraph) | **I3:** replay shows a fused global map for a real run |
 | by I4 | BradfordPanel, Cuvette, StandardCurveChart | **I4:** 06 D6–D9 pass on a real sampled pin |
 | by I5 | VLM captions (optional), polish, bug fixes | **I5 freeze** |
 
-Acceptance summary: doc 03 §5 (models), the Bradford tests above, 06 D2/D5/D7–D10 (your components), and the mapper: a station upload of 8 keyframes + BEV returns in < 1 s and appears in STDB within 2 s.
+Acceptance summary: doc 03 §5 (models), the Bradford tests above, 06 D2/D5/D7–D10 (your components), and the mapper: a station upload of 8 keyframes + BEV returns in < 1 s and appears in STDB within 2 s. Pi modules: the BEV and proposal checks in the I2 row above.
 
 ## 9. Mocks
 - **You provide** `fake_vision.py` (:8100; random-but-seeded components; `/analyze` calls the real `bradford_sim.simulate`, so the assay is real from I0) and `fake_mapper.py` (:8200; stores files, writes tiles from canned PNGs).

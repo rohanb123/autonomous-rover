@@ -86,7 +86,7 @@ const WHITE: RGBA = [1, 1, 1, 1];
 const SHADOW: RGBA = [0, 0, 0, 0.32];
 const CLEAR: RGBA = [0, 0, 0, 0];
 const HOME: RGBA = [0.88, 0.48, 0.25, 0.85];
-const RING: RGBA = hexRgba('rgba(232, 225, 217, 0.7)');
+const RING: RGBA = hexRgba('rgba(255, 255, 255, 0.5)');
 const ZONE: RGBA = [0.91, 0.88, 0.85, 0.06];
 const PULSE: RGBA = [1, 0.8, 0.5, 1];
 

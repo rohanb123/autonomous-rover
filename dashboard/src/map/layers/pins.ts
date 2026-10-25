@@ -6,13 +6,13 @@ import { type Camera, worldToScreen } from '../camera';
 export const HIT_RADIUS_PX = 12;
 
 export const STATUS_COLORS: Record<string, string> = {
-  new: '#9a8f85', // gray
-  queued: '#f0b429', // yellow
-  active: '#e07a3f', // orange
-  visited: '#4caf50', // green
-  failed: '#e5484d',
+  new: '#8a8a8a', // grey
+  queued: '#ffffff', // white: in the top-k
+  active: '#cfe6ff', // cold white-blue: being investigated
+  visited: '#4a4a4a', // dim: done
+  failed: '#c8693a', // muted Mars orange
 };
-const DIM = 'rgba(154, 143, 133, 0.35)'; // skipped, excluded, merged
+const DIM = 'rgba(138, 138, 138, 0.3)'; // skipped, excluded, merged
 
 export const statusColor = (status: string) => STATUS_COLORS[status] ?? DIM;
 export const isDim = (status: string) => !(status in STATUS_COLORS);
@@ -37,10 +37,10 @@ export function draw(ctx: CanvasRenderingContext2D, cam: Camera, rows: PinRows):
     ctx.fillStyle = statusColor(c.status);
     ctx.fill();
     ctx.lineWidth = c.candId === rows.selectedCandId ? 3 : 1;
-    ctx.strokeStyle = c.candId === rows.selectedCandId ? '#ffffff' : '#12100f';
+    ctx.strokeStyle = c.candId === rows.selectedCandId ? '#ffffff' : '#000000';
     ctx.stroke();
     if (c.rank > 0) {
-      ctx.fillStyle = '#12100f';
+      ctx.fillStyle = '#000000';
       ctx.font = `bold ${Math.max(9, Math.round(r))}px ui-sans-serif, system-ui, sans-serif`;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';

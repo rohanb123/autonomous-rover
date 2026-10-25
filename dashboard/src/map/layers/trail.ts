@@ -4,10 +4,10 @@ import type { Pose, RoverStatus } from '../../module_bindings/types';
 import { type Camera, headingToCanvasRad, worldToScreen } from '../camera';
 
 export const SOURCE_COLORS: Record<string, string> = {
-  aruco: '#4caf50',
+  aruco: '#cfe6ff',
   fused: '#ffffff',
 };
-export const DR_COLOR = '#8a8580'; // dr, dr+gyro, vo and anything unknown
+export const DR_COLOR = '#8a8a8a'; // dr, dr+gyro, vo and anything unknown
 
 export const sourceColor = (source: string) => SOURCE_COLORS[source] ?? DR_COLOR;
 
@@ -57,8 +57,8 @@ export function drawRover(ctx: CanvasRenderingContext2D, cam: Camera, x: number,
   ctx.lineTo(0, 5);
   ctx.lineTo(-8, 9);
   ctx.closePath();
-  ctx.fillStyle = '#e07a3f';
-  ctx.strokeStyle = '#12100f';
+  ctx.fillStyle = '#ffffff';
+  ctx.strokeStyle = '#000000';
   ctx.lineWidth = 1.5;
   ctx.fill();
   ctx.stroke();

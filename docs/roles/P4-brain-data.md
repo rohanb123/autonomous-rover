@@ -1,9 +1,11 @@
 # P4: Brain, data & dashboard lead (SW/backend lead)
 
 ## 1. Goal
-Own the **decision loop** and the **single source of truth**: the brain service that turns a mission into a mini science campaign (survey → score → top-k → scoop → log), the SpacetimeDB module, the dashboard app shell and panels, the shared contracts package, and integration. You are also the **integration lead**: you run the milestones in [04](../04-integration-timeline.md) and approve contract changes.
+Own the **decision loop** and the **single source of truth**: the brain service that turns a mission into a mini science campaign (survey → score → top-k → scoop → log), the SpacetimeDB module, the dashboard app shell and panels, the shared contracts package, and integration. You are also the **integration lead**: you run the milestones in [04](../04-integration-timeline.md).
 
 ## 2. Scope
+> "Not yours" means another person's default area. You may still work on it without asking; warn them first (AGENTS.md §2).
+
 | Yours | Not yours |
 |---|---|
 | `gx10/brain/**`, including `voice/` (ASR + NLU) | Vision/ML models and `config/models.yaml` (P3) |
@@ -53,7 +55,9 @@ class TopK:
     def offer(self, cand_id: str, score: float) -> None                   # heapq min-heap capped at k
     def rebuild(self, cands: dict[str, Candidate]) -> None                # after merge/skip/exclusion
     def items(self) -> list[tuple[float, str]]                            # sorted desc → ranks
-def nn_route(start: tuple[float,float], targets: list[Candidate]) -> list[Candidate]
+def best_route(start, targets, end=(0.0, 0.0)) -> list[Candidate]   # exact shortest order ending at `end` (home); end=None = open path
+def route_length(start, route, end=None) -> float
+def nn_route(start: tuple[float,float], targets: list[Candidate]) -> list[Candidate]   # fallback for > 8 targets
 
 # gx10/brain/fsm.py
 class RunFSM:   # states: IDLE SURVEY PLAN AWAIT_APPROVAL INVESTIGATE RETURN DONE PAUSED STOPPED ESTOP (00 §7)
@@ -88,7 +92,7 @@ TypeScript: `spacetimedb/src/schema.ts`, `index.ts` (02 §5–6); `dashboard/src
 ## 5. The campaign loop (what `RunFSM` does)
 1. `/api/mission/*` → (voice: `transcribe`) → `parse_mission` → `upsert_mission(status=parsed)` → `status=active`, FSM → SURVEY. The campaign's first rover command is `start_run {run_id}` so station and sample uploads carry the run id (00 §6.2).
 2. **SURVEY:** for each point in `station_plan`: `turn`/`drive` there → if overhead fresh, `set_pose` → `station` → for each proposal: `/score` → `final_score` → `merge_or_new` → `excluded`? → `upsert_candidate` → `TopK.offer`. Ranks → `upsert_candidate` (rank changes only).
-3. **PLAN:** `nn_route(pose, topk)` → `upsert_task` ×k. `suggest` mode → AWAIT_APPROVAL.
+3. **PLAN:** `best_route(pose, topk, home)` → `upsert_task` ×k. `suggest` mode → AWAIT_APPROVAL.
 4. **INVESTIGATE** each: `approach` (E_LOST_TARGET → outcome `unreachable`) → `scoop` → `/analyze(interest_score=score)` → if `scoop_has_item` false: one retry (re-approach + scoop), then outcome `empty_scoop` → `dump` → `mark_visited` (radius 0.20) → `add_analysis` → re-run `excluded` over remaining candidates → recompute the NN route from the new pose.
 5. **RETURN:** drive home → `end_run` → `POST mapper /fuse/{run_id}` → run status `done`.
 - **Decisions (P4, 2026-10-24):** the INVESTIGATE targets are frozen at PLAN; after each visit only the remaining planned targets are re-ordered by NN. k counts *attempts* (sampled, empty_scoop, unreachable); a planned target that gets excluded or skipped by the operator is replaced by the best open candidate, so the run still makes k attempts. Look-only missions (`sample: false`) approach + `snapshot` each target and record the visit as `skipped`. `come_back` works from SURVEY, INVESTIGATE (the interrupted target goes back to `queued`), AWAIT_APPROVAL and STOPPED; `/api/run/end` uses it too.
@@ -122,12 +126,12 @@ Commands from the dashboard run in order through the FSM. `stop` and E-STOP skip
 - After every schema change: republish (`--delete-data=always` in dev), rerun `claim_writer`/`add_writer`, regenerate bindings.
 - Rank updates can flood `upsert_candidate`; only write rows whose rank/status changed.
 - Keep `config/run.yaml` and 00 §8 in sync (a test compares them).
-- You approve contract changes; bump `CONTRACT_VERSION` and update every role file's contract copy.
+- Anyone may change a contract (AGENTS.md §3). As integration lead, check that `CONTRACT_VERSION` was bumped and every role file's contract copy was updated.
 
 ## 10. Contracts you need (copies; source of truth = [00](../00-overview-and-contracts.md))
 **Ports:** brain :8000 (yours), STDB :3000 (yours), vision :8100, mapper :8200, overhead WS :8300/pose, Pi WS :8765/rover, Grok `https://api.x.ai/v1`, dashboard :5173.
 **Rover ops:** `start_run, drive{dist_m,speed}, turn{deg,speed}, stop, estop, clear_estop, set_pose{x,y,heading_deg,source}, station{station_id,n_views:8,step_deg:45}, approach{cand_id,x,y}, scoop{sample_id}, dump, scoop_pose{pose}, snapshot, heartbeat`; replies `ack` (≤ 0.5 s) / `done{result}` / `err{code}`; codes `E_ESTOP E_BUSY E_TIMEOUT E_BAD_ARGS E_TILT E_CAMERA E_LOST_TARGET E_UPLOAD E_SCOOP E_INTERNAL`. Timeouts: station 60 s, approach 45 s, scoop 30 s. Heartbeat 0.25 s.
 **REST (yours):** `POST /api/run/start, /api/run/end, /api/mission/voice (audio/webm), /api/mission/text {text}, /api/approve {mission_id, approve}, /api/quick {cmd}, /api/estop, /api/estop/clear`, `GET /api/health`; every command returns `{accepted, cmd_uid}`. `stop` and estop bypass the FSM queue.
-**Scoring:** `score = 0.35·novelty + 0.25·visual + 0.15·pickable + 0.15·category_score − 0.10·min(dist/radius,1)`; dedupe ≤ 0.15 m & cos ≥ 0.85, or ≤ 0.06 m; exclusion radius 0.20 m; min-heap capped at k; NN route recomputed after each visit; reason ≤ 140 chars.
+**Scoring:** `score = 0.35·novelty + 0.25·visual + 0.15·pickable + 0.15·category_score − 0.10·min(dist/radius,1)`; dedupe ≤ 0.15 m & cos ≥ 0.85, or ≤ 0.06 m; exclusion radius 0.20 m; min-heap capped at k; shortest route ending at home, recomputed after each visit; reason ≤ 140 chars.
 **Vision:** `/score {run_id, items[{prop_id,crop_url,size_m,xy}]}` → components; `/analyze {run_id, sample_id, cand_id, image_url, interest_score}` → `AnalysisResult` + `assay` (00 §6.7). Mapper: `POST /fuse/{run_id}`.
 **Reducers you call:** `start_run, end_run, upsert_mission, upsert_task, insert_pose, insert_telemetry, upsert_rover_status, upsert_candidate, mark_visited, add_analysis, log_event` (arg order in 02 §6). `add_analysis` maps `assay` fields → `assayType, a595, concentration, units, verdict, inLinearRange, standardCurveParams=json.dumps(...), simulated, seed, modelVersion`; empty scoop → `""`, `-1`, `-1`, `""`, `""`, `false`, `"{}"`, `true`, `0`, `""`.

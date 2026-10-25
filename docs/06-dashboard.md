@@ -2,7 +2,7 @@
 
 **App owner: P4** (shell, routing, STDB connection, brain API client, all panels except the two below).
 **P3 owns** `dashboard/src/map/` (the map canvas and its layers) and `dashboard/src/assay/` (simulated Bradford assay panel).
-Every component below has exactly one owner.
+Every component below has a default owner; anyone may work on any of them, with a heads-up (AGENTS.md §2).
 
 ## 1. Stack
 | Choice | Why |
@@ -110,8 +110,8 @@ No component writes to STDB. No component talks to the rover.
 - **Local tile** (BEV, rover frame at capture): draw image centered at (x, y), rotated by `headingDeg`, size `wPx·resMPx` m. Newer tiles drawn on top. Opacity 0.85.
 - **Global tile** (replay, mission frame, axis-aligned): draw at `originX, originY` with `resMPx`. Hidden in live mode unless `run.fused`.
   - **Convention** (the mapper writes it, MapView reads it): same image orientation as BEV tiles, so image up = mission +x and image left = mission +y. `(originX, originY)` is the mission position of the tile's **top-left pixel corner** (its max-x, max-y corner). Pixel (col, row) → `x = originX − row·resMPx`, `y = originY − col·resMPx`. Tiles are 512 px; id `g_<run>_<ix>_<iy>`. `mocks/fake_brain.py` produces tiles this way.
-- **Trail**: polyline of poses (color by source: dr gray, aruco green, fused white). Rover glyph = triangle at the latest pose (or at the scrubbed pose).
-- **Pins**: candidates colored by status (new gray, queued yellow, active orange, visited green, skipped/excluded dim). Rank number inside top-k pins. Size ∝ score.
+- **Trail**: polyline of poses (color by source: dr grey, aruco cold white-blue, fused white). Rover glyph = triangle at the latest pose (or at the scrubbed pose).
+- **Pins**: candidates colored by status (new grey, queued white, active cold white-blue, visited dim grey, failed muted Mars orange, skipped/excluded dim). Palette: the shell theme in `src/styles.css` (near-black, white, greys; one cold blue for live, one Mars orange for warnings). Rank number inside top-k pins. Size ∝ score.
 - **Exclusion rings**: circle of `radiusM` at each visit, dashed.
 - **Stations**: small square at each `local_map_tile` (x, y).
 - Hit-testing for pin click: within 12 px.

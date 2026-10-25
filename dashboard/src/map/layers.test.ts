@@ -94,15 +94,15 @@ describe('tile visibility (docs/06 §2)', () => {
 });
 
 describe('trail and rover glyph', () => {
-  it('colours segments by pose source: dr gray, aruco green, fused white', () => {
+  it('colours segments by pose source: dr grey, aruco white-blue, fused white', () => {
     expect(trail.sourceColor('dr')).toBe(trail.DR_COLOR);
     expect(trail.sourceColor('dr+gyro')).toBe(trail.DR_COLOR);
-    expect(trail.sourceColor('aruco')).toBe('#4caf50');
+    expect(trail.sourceColor('aruco')).toBe('#cfe6ff');
     expect(trail.sourceColor('fused')).toBe('#ffffff');
     const { ctx, calls } = recorder();
     trail.draw(ctx, cam, { poses: [pose(1, 0, 0, 2, 'aruco'), pose(0, 0, 0, 1, 'dr')] });
     const strokes = calls.filter((c) => c.op === 'set:strokeStyle').map((c) => c.args[0]);
-    expect(strokes[0]).toBe('#4caf50'); // the one segment, coloured by its later pose
+    expect(strokes[0]).toBe('#cfe6ff'); // the one segment, coloured by its later pose
   });
   it('glyph uses the latest pose, else the status row', () => {
     expect(trail.roverPose({ poses: [pose(0, 0, 0, 1), pose(2, 1, 45, 3), pose(1, 1, 0, 2)] })).toMatchObject({ x: 2, y: 1, headingDeg: 45 });
@@ -113,10 +113,10 @@ describe('trail and rover glyph', () => {
 
 describe('pins (docs/06 §6)', () => {
   it('colours by status and dims skipped/excluded/merged', () => {
-    expect(pins.statusColor('new')).toBe('#9a8f85');
-    expect(pins.statusColor('queued')).toBe('#f0b429');
-    expect(pins.statusColor('active')).toBe('#e07a3f');
-    expect(pins.statusColor('visited')).toBe('#4caf50');
+    expect(pins.statusColor('new')).toBe('#8a8a8a');
+    expect(pins.statusColor('queued')).toBe('#ffffff');
+    expect(pins.statusColor('active')).toBe('#cfe6ff');
+    expect(pins.statusColor('visited')).toBe('#4a4a4a');
     for (const s of ['skipped', 'excluded', 'merged']) expect(pins.isDim(s)).toBe(true);
   });
   it('size grows with score', () => {

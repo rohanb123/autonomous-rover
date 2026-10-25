@@ -3,7 +3,7 @@
 > If code disagrees with this file, the code is wrong. Change process: [AGENTS.md §3](../AGENTS.md#3-changing-a-contract).
 
 ## 0. Version
-`CONTRACT_VERSION = 1.4.0` (2026-10-24: removed the Mars delay mode in 1.1.0; mission parsing via Grok in 1.2.0; keyframe headings are absolute + mapper `/health` in 1.3.0; run-scoped DB keys in 1.4.0)
+`CONTRACT_VERSION = 1.5.0` (2026-10-24: removed the Mars delay mode in 1.1.0; mission parsing via Grok in 1.2.0; keyframe headings are absolute + mapper `/health` in 1.3.0; run-scoped DB keys in 1.4.0; shortest route ending at home in 1.5.0)
 
 ## 1. System in one page
 
@@ -31,7 +31,9 @@ Every state change is written to SpacetimeDB. The dashboard reads **only** Space
 | Persistent state / history | SpacetimeDB (P4 module) | Services keeping private copies as truth (except Pi local store, which is a buffer + backup) |
 | Images / big files | mapper disk `/data/runs/…` (P3), URLs in DB | Full-res images inline in DB |
 
-## 2. Repo tree and owners (MECE)
+## 2. Repo tree and owners
+
+Owners below are **default owners**: who builds a path and who to ask. Anyone may edit any path without permission; warn the owner when you do ([AGENTS.md §2](../AGENTS.md#2-ownership-default-owners-open-to-everyone)).
 
 ```
 ares-scout/
@@ -44,7 +46,7 @@ ares-scout/
 ├── .gitignore .editorconfig       P4
 ├── .python-version .nvmrc         P4  (3.11, Node 20)
 ├── docs/                          P4 (00, 02, 04, 05, 06, sources, TEAM.md); P1 (01); P3 (03); each Pn owns roles/Pn-*.md
-│   └── requests/                  anyone (cross-owner change requests)
+│   └── requests/                  anyone (optional notes: questions and decisions, not permission)
 ├── config/                        P4 except models.yaml
 │   ├── network.yaml               IPs, ports (mirror of §3)
 │   ├── run.yaml                   scoring weights, radii, k defaults (mirror of §8)
@@ -67,7 +69,7 @@ ares-scout/
 │   ├── scoop/                     templates (scoop_template.pdf/svg), photos, measured angles sheet
 │   ├── arena/                     arena layout, marker placement
 │   └── checklists/preflight.md    pre-run checklist
-├── rover/                         P2  (runs on Pi)
+├── rover/                         P2  (runs on Pi); bev.py and proposals.py: P3
 │   ├── pyproject.toml
 │   ├── rover/
 │   │   ├── main.py                entry: loads calib, starts servers
@@ -83,8 +85,8 @@ ares-scout/
 │   │   ├── heading.py             gyro integration + BEV visual-odometry yaw
 │   │   ├── pose.py                dead-reckoning pose estimator + set_pose
 │   │   ├── station.py             spin-capture routine
-│   │   ├── bev.py                 homography → ground tile
-│   │   ├── proposals.py           "rockster-lite" rock proposals (classic CV)
+│   │   ├── bev.py                 homography → ground tile                  P3 (from P2, 2026-10-24)
+│   │   ├── proposals.py           "rockster-lite" rock proposals (classic CV)  P3 (from P2, 2026-10-24)
 │   │   ├── approach.py            visual servo into scoop zone
 │   │   ├── local_store.py         SD-card station bundles + SQLite index
 │   │   ├── uploader.py            POST to mapper with retry queue
@@ -165,10 +167,10 @@ ares-scout/
 └── data/                          gitignored; runtime (GX10 /data symlink)
 ```
 
-**Seams where two owners meet.** Each one has exactly one rule:
+**Seams where two areas meet.** Conventions, so cross-area work stays consistent:
 - **Contract copies in role docs.** Each Pn owns `roles/Pn-*.md`, **except** its final "contract copies" section. Whoever changes a contract updates those copies (AGENTS.md §3, step 3).
 - **Python deps.** Each service dir has its own `requirements.txt`, owned by that dir's owner. There's no shared GX10 dependency file.
-- **Dashboard deps and styles.** `dashboard/package.json` and `src/styles.css` are P4's. P3 components only *read* the CSS variables, and keep their own styles in `map/map.css` / `assay/assay.css`. If P3 needs an npm dep, they request it in `docs/requests/` (doc 06 aims for no extra deps).
+- **Dashboard deps and styles.** `dashboard/package.json` and `src/styles.css` are P4's. P3 components only *read* the CSS variables, and keep their own styles in `map/map.css` / `assay/assay.css`. If P3 needs an npm dep, they add it (heads-up to P4) (doc 06 aims for no extra deps).
 - **Dashboard ↔ map/assay.** `MapViewProps` and `BradfordPanelProps` (doc 06 §4) are the whole interface. P4 renders the components and passes rows; P3 never opens an STDB connection.
 - **Model config.** `config/models.yaml` (vision/ML models) is P3's, and the only P3 file in `config/`. Voice settings (ASR size, Grok model) live in `config/run.yaml` (P4).
 - **Arena photos.** P1 captures and labels them into `ml/data/arena/`. That's gitignored data, not repo files, in the layout docs/03 defines. P3 owns `arena_fewshot.py`, which consumes them.
@@ -411,7 +413,7 @@ stateDiagram-v2
 - **Dedupe**: merge a new proposal into an existing candidate if `‖xy‖ ≤ 0.15 m` **and** `cos(emb) ≥ 0.85`; or `‖xy‖ ≤ 0.06 m` regardless. The merged candidate keeps the max score and appends `prop_ids`.
 - **Exclusion**: drop/mark `excluded` any candidate within `visit_radius_m = 0.20` of any visit.
 - **Heap**: a min-heap keyed by `score`, capped at `k`. On a new candidate: if size < k, push; elif score > heap[0], replace the root. Rebuilt after merge/skip/exclusion.
-- **Route**: nearest-neighbor from the current pose over the heap contents; recomputed after each visit (pose drifts).
+- **Route**: the **shortest** order to visit the planned targets from the current pose, **ending at home** when `return_home` (an open path otherwise): exact Held-Karp search for k ≤ 8, nearest-neighbor beyond that. Recomputed after each visit (pose drifts).
 - **Reason string** (`scoring.explain`): the top 2 positive components with values + category match + distance, ≤ 140 chars.
 
 ## 9. Contract copies

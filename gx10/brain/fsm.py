@@ -415,6 +415,10 @@ class RunFSM:
                 self.cands[cid] = c = c.model_copy(update={"rank": rank, "status": status})
                 self.db.candidate(c, self.components[cid])
 
+    def _home(self) -> tuple[float, float] | None:
+        """The route's fixed final stop: home when the mission returns there."""
+        return (0.0, 0.0) if self.mission.return_home else None
+
     def _seq(self) -> int:
         self._next_seq += 1
         return self._next_seq - 1
@@ -436,11 +440,12 @@ class RunFSM:
     async def _plan(self) -> None:
         await self._checkpoint()
         p = self.pose
-        self.route = planner.nn_route((p.x, p.y), self._open_topk())
+        self.route = planner.best_route((p.x, p.y), self._open_topk(), self._home())
         self.plan_ids = [c.cand_id for c in self.route]
-        self._transition(
-            "PLAN", f"top-{len(self.route)} route: " + " -> ".join(c.cand_id for c in self.route)
-        )
+        home = self._home()
+        length = planner.route_length((p.x, p.y), self.route, home)
+        stops = " -> ".join(c.cand_id for c in self.route) + (" -> home" if home else "")
+        self._transition("PLAN", f"shortest route ({length:.2f} m): {stops}")
         for c in self.route:
             self._visit_task(c.cand_id)
 
@@ -456,7 +461,7 @@ class RunFSM:
                 self.db.event("fsm", f"time up ({m.max_duration_s:g} s): heading home", "warn")
                 break
             p = self.pose
-            route = planner.nn_route((p.x, p.y), self._targets(m.k - self.attempts))
+            route = planner.best_route((p.x, p.y), self._targets(m.k - self.attempts), self._home())
             if not route:
                 self.db.event("fsm", "no targets left")
                 break
