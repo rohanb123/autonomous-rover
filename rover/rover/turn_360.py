@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Spin the rover 360 degrees in place, pausing 1 s after every 45 degrees.
+"""Spin up to 360 degrees reading sonar on every tick; stop and approach on first detection.
 
-Uses the MPU6050 gyro (z axis) to measure the turn, the same idea as the station spin in the
-P2 role doc. If the IMU isn't found, it falls back to timed turns (much less accurate).
+The rover turns continuously (no step pauses). The sonar is polled every 5 ms via gpiozero's
+non-blocking .distance property. The first reading that drops below DETECT_RATIO × baseline
+immediately halts the spin and drives the rover straight toward the object, stopping at
+APPROACH_STOP_M.
 
-The HC-SR04 sonar reads distance at every stop. The step with the shortest reading (if it
-drops below DETECT_RATIO × baseline) is flagged as the object direction. After the full 360°
-the rover turns that many 45° steps to face the object and stops.
+Uses the MPU6050 gyro (z axis) to measure the turn. Falls back to timed turns without an IMU.
 
 Wiring (see the rover wiring diagrams):
   Left motor  (L293D pins 3/6):   EN1,2 -> GPIO12, 1A -> GPIO5,  2A -> GPIO6
@@ -21,23 +21,24 @@ import time
 
 from gpiozero import Motor
 
-# ---- settings ----
-TURN_SPEED = 0.65  # 0..1; full power on a 9V battery (it sags under load, motors see ~5-6V)
-STEP_DEG = 45.0
+# ---- motor / turn settings ----
+TURN_SPEED = 0.65       # 0..1; spin duty cycle
+APPROACH_SPEED = 0.50   # 0..1; forward drive duty cycle
 TOTAL_DEG = 360.0
-PAUSE_S = 1.0
-STOP_EARLY_DEG = 3.0  # cut power this early to allow for coasting; tune after a test run
-STEP_TIMEOUT_S = 8.0  # stop if a 45 degree step takes longer than this (stalled wheels/flat battery)
-TURN_LEFT = True  # True = counter-clockwise seen from above
-FLIP_LEFT = False  # same meaning as in motor_obstacle_flipped.py
-FLIP_RIGHT = False
+STOP_EARLY_DEG = 3.0    # cut spin power this many degrees early to allow coasting
+TURN_TIMEOUT_S = 30.0   # safety abort if full 360° takes longer than this
+APPROACH_TIMEOUT_S = 10.0  # abort approach if object never gets close enough
+APPROACH_STOP_M = 0.15  # stop driving when the sonar reads this close
+TURN_LEFT = True        # True = counter-clockwise seen from above
+FLIP_LEFT = False       # set True if left motor is wired backwards
+FLIP_RIGHT = False      # set True if right motor is wired backwards
 TIMED_DEG_PER_S = 90.0  # only used without the IMU; measure and adjust
 
 # ---- sonar settings ----
 SONAR_TRIG = 23
 SONAR_ECHO = 24
-SONAR_SAMPLES = 5    # readings averaged at each stop (one every 50 ms = 250 ms total)
-DETECT_RATIO = 0.75  # flag if distance < baseline × this (object is at least 25% closer)
+SONAR_MAX_DIST_M = 5.0   # HC-SR04 hardware max ~4 m; 5 m just extends the echo timeout
+DETECT_RATIO = 0.75      # flag if live reading < baseline × this (25%+ closer than open space)
 
 left = Motor(forward=6, backward=5, enable=12)
 right = Motor(forward=20, backward=21, enable=13)
@@ -63,11 +64,13 @@ except Exception as e:
 sonar = None
 try:
     from gpiozero import DistanceSensor
-    sonar = DistanceSensor(echo=SONAR_ECHO, trigger=SONAR_TRIG, max_distance=4.0)
+    sonar = DistanceSensor(echo=SONAR_ECHO, trigger=SONAR_TRIG, max_distance=SONAR_MAX_DIST_M)
     print("Sonar ready.")
 except Exception as e:
     print(f"Sonar not available ({e}); distance detection disabled.")
 
+
+# ---- helpers ----------------------------------------------------------------
 
 def gz_dps():
     hi, lo = bus.read_i2c_block_data(MPU, 0x47, 2)
@@ -77,7 +80,7 @@ def gz_dps():
     return v / 131.0
 
 
-def wheel(motor, forward, flipped):
+def _wheel(motor, forward, flipped):
     if forward != flipped:
         motor.forward(TURN_SPEED)
     else:
@@ -85,9 +88,21 @@ def wheel(motor, forward, flipped):
 
 
 def start_turn():
-    # Turning left (CCW): left wheel backward, right wheel forward.
-    wheel(left, not TURN_LEFT, FLIP_LEFT)
-    wheel(right, TURN_LEFT, FLIP_RIGHT)
+    # CCW: left wheel backward, right wheel forward (or flipped if wiring is reversed).
+    _wheel(left, not TURN_LEFT, FLIP_LEFT)
+    _wheel(right, TURN_LEFT, FLIP_RIGHT)
+
+
+def drive_fwd():
+    """Drive straight forward, respecting motor wiring flips."""
+    if not FLIP_LEFT:
+        left.forward(APPROACH_SPEED)
+    else:
+        left.backward(APPROACH_SPEED)
+    if not FLIP_RIGHT:
+        right.forward(APPROACH_SPEED)
+    else:
+        right.backward(APPROACH_SPEED)
 
 
 def halt():
@@ -95,21 +110,19 @@ def halt():
     right.stop()
 
 
-def read_dist_m():
-    """Average SONAR_SAMPLES sonar readings. Returns metres, or None if sonar unavailable."""
+def sonar_dist():
+    """Non-blocking: return the sensor's latest distance in metres, or None."""
     if sonar is None:
         return None
-    readings = []
-    for _ in range(SONAR_SAMPLES):
-        d = sonar.distance  # gpiozero returns 0..max_distance in metres
-        if d is not None:
-            readings.append(d)
-        time.sleep(0.05)
-    return sum(readings) / len(readings) if readings else None
+    return sonar.distance  # gpiozero updates this in a background thread
+
+
+def object_detected(dist, baseline):
+    return dist is not None and baseline is not None and dist < baseline * DETECT_RATIO
 
 
 class Heading:
-    """Integrates the gyro continuously, including during pauses, so coasting is counted."""
+    """Integrates gz_dps continuously. Call update() every loop tick."""
 
     def __init__(self):
         self.bias = 0.0
@@ -117,7 +130,7 @@ class Heading:
         self.last = time.perf_counter()
 
     def calibrate(self, seconds=2.0):
-        print(f"Calibrating gyro for {seconds:.0f} s, keep the rover still...")
+        print(f"Calibrating gyro for {seconds:.0f} s — keep the rover still...")
         samples, t0 = [], time.perf_counter()
         while time.perf_counter() - t0 < seconds:
             samples.append(gz_dps())
@@ -128,108 +141,104 @@ class Heading:
 
     def update(self):
         now = time.perf_counter()
-        # abs() so the result doesn't depend on which way up the IMU is mounted;
-        # the 0.5 deg/s deadband stops sensor noise from adding up while standing still.
         rate = abs(gz_dps() - self.bias)
-        if rate > 0.5:
+        if rate > 0.5:  # 0.5 deg/s deadband: ignore sensor noise while stationary
             self.deg += rate * (now - self.last)
         self.last = now
         return self.deg
 
-    def wait(self, seconds):
-        t0 = time.perf_counter()
-        while time.perf_counter() - t0 < seconds:
-            self.update()
-            time.sleep(0.005)
 
-
-def _check_dist(k, dist, baseline_dist, flagged_step, min_dist):
-    """Update (flagged_step, min_dist) if this step's distance beats the current minimum."""
-    if dist is not None and baseline_dist is not None and dist < baseline_dist * DETECT_RATIO:
-        if dist < min_dist:
-            return k, dist
-    return flagged_step, min_dist
-
-
-steps = int(TOTAL_DEG / STEP_DEG)
-flagged_step = None
-min_dist = float("inf")
+# ---- main -------------------------------------------------------------------
 
 try:
-    # Take a baseline reading before the scan. Open-space distance the rover sees at rest.
-    baseline_dist = read_dist_m()
+    # Baseline: read sonar once while the rover is still. gpiozero fires trigger pulses
+    # in the background, so .distance is already updated by the time calibration finishes.
+    baseline_dist = sonar_dist()
     if baseline_dist is not None:
         print(f"Baseline distance: {baseline_dist:.3f} m")
 
+    detected = False
+    detect_dist = None
+
     if bus:
         h = Heading()
-        h.calibrate()
-        for k in range(1, steps + 1):
-            target = k * STEP_DEG  # cumulative target, so small errors don't add up
-            start_turn()
-            t0 = time.perf_counter()
-            while h.update() < target - STOP_EARLY_DEG:
-                if time.perf_counter() - t0 > STEP_TIMEOUT_S:
-                    halt()
-                    raise RuntimeError(
-                        f"step {k} timed out at {h.deg:.0f} deg; wheels stalled or speed too low"
-                    )
-                time.sleep(0.005)
-            halt()
-            h.wait(PAUSE_S)  # keeps integrating, so coasting after the stop is measured
+        h.calibrate()  # 2 s; sonar keeps updating during this time
 
-            dist = read_dist_m()
-            flagged_step, min_dist = _check_dist(k, dist, baseline_dist, flagged_step, min_dist)
-            dist_str = f"{dist:.3f} m" if dist is not None else "n/a"
-            flag_str = "  *** OBJECT ***" if flagged_step == k else ""
-            print(f"step {k}/{steps}: target {target:5.0f}, measured {h.deg:6.1f} deg  dist={dist_str}{flag_str}")
+        # Re-read baseline after calibration (rover is still, sonar has had time to settle).
+        baseline_dist = sonar_dist()
+        if baseline_dist is not None:
+            print(f"Baseline (post-cal): {baseline_dist:.3f} m")
 
-        scan_deg = h.deg  # snapshot before the return turn
+        start_turn()
+        t0 = time.perf_counter()
 
-        if flagged_step is not None:
-            return_deg = flagged_step * STEP_DEG
-            print(f"\nObject at step {flagged_step} ({return_deg:.0f}° from start, dist={min_dist:.3f} m).")
-            print(f"Turning {flagged_step} step(s) × {STEP_DEG:.0f}° = {return_deg:.0f}° to face it...")
-            return_target = h.deg + return_deg
-            start_turn()
-            t0 = time.perf_counter()
-            while h.update() < return_target - STOP_EARLY_DEG:
-                if time.perf_counter() - t0 > STEP_TIMEOUT_S * flagged_step:
-                    halt()
-                    raise RuntimeError("return turn timed out")
-                time.sleep(0.005)
-            halt()
-            print(f"Stopped. Facing step {flagged_step} direction.")
+        while h.update() < TOTAL_DEG - STOP_EARLY_DEG:
+            if time.perf_counter() - t0 > TURN_TIMEOUT_S:
+                halt()
+                raise RuntimeError("spin timed out; wheels stalled or speed too low")
+
+            dist = sonar_dist()
+            if object_detected(dist, baseline_dist):
+                halt()
+                detected = True
+                detect_dist = dist
+                print(f"Object at {dist:.3f} m after {h.deg:.1f}° — stopping spin")
+                break
+
+            time.sleep(0.005)
         else:
-            print("No object detected during scan.")
+            halt()
+            print(f"Completed {h.deg:.1f}° scan — no object detected.")
 
-        print(f"Done. Scan: {scan_deg:.1f} deg (error {scan_deg - TOTAL_DEG:+.1f})")
+        scan_deg = h.deg
+
     else:
-        step_time = STEP_DEG / TIMED_DEG_PER_S
-        for k in range(1, steps + 1):
-            start_turn()
-            time.sleep(step_time)
-            halt()
-            time.sleep(PAUSE_S)
+        # Timed fallback: wall-clock spin, same continuous sonar logic.
+        total_s = TOTAL_DEG / TIMED_DEG_PER_S
+        start_turn()
+        t0 = time.perf_counter()
 
-            dist = read_dist_m()
-            flagged_step, min_dist = _check_dist(k, dist, baseline_dist, flagged_step, min_dist)
-            dist_str = f"{dist:.3f} m" if dist is not None else "n/a"
-            flag_str = "  *** OBJECT ***" if flagged_step == k else ""
-            print(f"step {k}/{steps}: timed {STEP_DEG:.0f} deg  dist={dist_str}{flag_str}")
+        while True:
+            elapsed = time.perf_counter() - t0
+            if elapsed >= total_s:
+                halt()
+                print(f"Completed 360° scan (timed) — no object detected.")
+                break
 
-        if flagged_step is not None:
-            return_deg = flagged_step * STEP_DEG
-            print(f"\nObject at step {flagged_step} ({return_deg:.0f}° from start, dist={min_dist:.3f} m).")
-            print(f"Turning {flagged_step} step(s) × {STEP_DEG:.0f}° = {return_deg:.0f}° to face it...")
-            start_turn()
-            time.sleep(step_time * flagged_step)
-            halt()
-            print(f"Stopped. Facing step {flagged_step} direction.")
-        else:
-            print("No object detected during scan.")
+            dist = sonar_dist()
+            if object_detected(dist, baseline_dist):
+                halt()
+                detected = True
+                detect_dist = dist
+                print(f"Object at {dist:.3f} m after ~{elapsed * TIMED_DEG_PER_S:.0f}° (timed) — stopping spin")
+                break
 
-        print("Done (timed, unmeasured).")
+            time.sleep(0.005)
+
+        scan_deg = None  # not measured in timed mode
+
+    # ---- approach -----------------------------------------------------------
+    if detected:
+        print(f"Approaching (stop at {APPROACH_STOP_M:.2f} m)...")
+        drive_fwd()
+        t_ap = time.perf_counter()
+
+        while True:
+            d = sonar_dist()
+            if d is not None and d <= APPROACH_STOP_M:
+                halt()
+                print(f"Reached object at {d:.3f} m.")
+                break
+            if time.perf_counter() - t_ap > APPROACH_TIMEOUT_S:
+                halt()
+                print("Approach timed out.")
+                break
+            time.sleep(0.005)
+
+    if scan_deg is not None:
+        print(f"Done. Scan covered {scan_deg:.1f} deg.")
+    else:
+        print("Done.")
 
 except KeyboardInterrupt:
     print("\nStopped.")
