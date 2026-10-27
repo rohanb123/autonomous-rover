@@ -82,7 +82,7 @@ CPU_TEMP_CACHE_S = 1.0
 
 #: Duty for the last, short `approach` moves: slow enough not to overshoot a 30 cm gap.
 APPROACH_SPEED = 0.4
-#: Below this an approach drive is skipped; timed drives cannot resolve it.
+#: Below this an approach drive is skipped; the speed-table timing cannot resolve it.
 MIN_APPROACH_DRIVE_M = 0.01
 
 

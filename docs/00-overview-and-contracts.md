@@ -82,7 +82,8 @@ ares-scout/
 │   │   ├── servos.py              PCA9685 channels, µs limits
 │   │   ├── imu.py                 accel(/gyro) driver, auto-detect 0x68/0x53
 │   │   ├── camera.py              OpenCV capture, fixed exposure
-│   │   ├── motion.py              timed drive/turn primitives, gyro-closed turn if available
+│   │   ├── motion.py              drive/turn primitives: PID heading hold + PID gyro turns
+│   │   ├── pid.py                 PID controller used by motion.py
 │   │   ├── heading.py             gyro integration + BEV visual-odometry yaw
 │   │   ├── pose.py                dead-reckoning pose estimator + set_pose
 │   │   ├── station.py             spin-capture routine

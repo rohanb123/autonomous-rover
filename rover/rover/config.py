@@ -68,6 +68,17 @@ class MotionCfg:
     min_speed: float
     turn_settle_s: float
     gyro_turn_gain: float
+    # PID gains (rover.motion). Defaulted so a calib.yaml written before them still loads.
+    # Heading hold during `drive`: error in degrees -> differential wheel correction.
+    heading_kp: float = 0.02
+    heading_ki: float = 0.01
+    heading_kd: float = 0.002
+    heading_max_corr: float = 0.2
+    # Gyro `turn`: remaining degrees -> wheel duty, clamped to [min_speed, requested].
+    turn_kp: float = 0.012
+    turn_ki: float = 0.0
+    turn_kd: float = 0.001
+    turn_tol_deg: float = 1.0
 
 
 @dataclass(frozen=True)

@@ -97,13 +97,15 @@ class Aborted(RuntimeError)   # .code: ErrCode -- E_ESTOP / E_TIMEOUT / E_TILT
 class Motion:
     def __init__(self, motors, pose, calib, imu=None, safety=None,
                  *, clock=time.monotonic, sleep=time.sleep): ...
-    def drive(self, dist_m: float, speed: float) -> Pose            # timed by calib m_per_s_at
-    def turn(self, deg: float, speed: float) -> tuple[Pose, str]    # gyro-closed else timed
+    def drive(self, dist_m: float, speed: float) -> Pose            # PID heading hold on the gyro; distance from m_per_s_at
+    def turn(self, deg: float, speed: float) -> tuple[Pose, str]    # PID on the gyro, else timed
     def stop(self) -> Pose; def request_stop(self); def clear_stop(self)
 # Blocks on the worker thread, polling every calib.safety.stop_tick_s (20 ms) -- that is the
 # stop-latency budget. The pose integrates ELAPSED time, so a drive that was cut reports
 # where it actually got to. A gyro turn has a wall-clock ceiling, or a dead gyro (reading 0
-# forever) would spin until the heartbeat watchdog happened to notice.
+# forever) would spin until the heartbeat watchdog happened to notice. Both PID loops use
+# rover/rover/pid.py (derivative on the gyro rate, clamped integral); gains are
+# calib.yaml motion.heading_* and motion.turn_*.
 
 # camera.py  (BUILT)
 class FrameSource(Protocol): read; set; get; release

@@ -53,7 +53,17 @@ motion:
                             # rover were turning 45 deg/s while the motors sat at 15% duty,
                             # and every keyframe heading after the first would be wrong.
   turn_settle_s: 2.0        # P2 role doc section 5: settle between station views
-  gyro_turn_gain: 1.0       # UNVERIFIED: closed-loop turn trim
+  gyro_turn_gain: 1.0       # UNVERIFIED: gyro scale trim, used by both PID loops
+  # PID heading hold during `drive` (rover/rover/pid.py). Error in deg -> wheel correction.
+  heading_kp: 0.02          # UNVERIFIED: tune on the arena floor
+  heading_ki: 0.01          # UNVERIFIED
+  heading_kd: 0.002         # UNVERIFIED
+  heading_max_corr: 0.2     # largest left/right duty split the loop may apply
+  # PID gyro turn. Remaining deg -> wheel duty, clamped to [min_speed, requested speed].
+  turn_kp: 0.012            # UNVERIFIED
+  turn_ki: 0.0              # UNVERIFIED
+  turn_kd: 0.001            # UNVERIFIED
+  turn_tol_deg: 1.0         # stop once within this many degrees of the target
   motor_trim: 0.0           # UNVERIFIED: >0 scales the LEFT wheel by (1 - trim). calibrate_motion.py
   m_per_s_at:               # UNVERIFIED: measure over 1.0 m with tape (P2 role doc section 6)
     0.3: 0.12

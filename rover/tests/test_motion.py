@@ -338,6 +338,125 @@ def test_an_estop_mid_gyro_turn_aborts():
     assert exc.value.code == "E_ESTOP"
 
 
+class PlantImu:
+    """A gyro on a simulated chassis: yaw rate follows the wheel split, plus a disturbance.
+
+    `drift_dps` stands in for a weak motor or a dragging wheel: on its own it bends a
+    straight drive into an arc, which is exactly what the heading-hold loop has to cancel.
+    """
+
+    def __init__(self, motors: Motors, drift_dps: float = 0.0, dps_per_split: float = 200.0):
+        self.motors = motors
+        self.drift_dps = drift_dps
+        self.dps_per_split = dps_per_split
+
+    def has_gyro(self) -> bool:
+        return True
+
+    def read(self) -> dict[str, float]:
+        left, right = self.motors.last
+        gz = self.dps_per_split * (right - left) + self.drift_dps
+        return {"ax": 0.0, "ay": 0.0, "az": 9.81, "gz_dps": gz}
+
+
+def build_plant(drift_dps: float, calib=CALIB):
+    motion, motors, pins, pose, clock = build(calib=calib)
+    motion.imu = PlantImu(motors, drift_dps)
+    return motion, motors, pins, pose, clock
+
+
+def _no_pid(**extra):
+    return parse_calib(
+        helpers.calib_dict(
+            motion={"heading_kp": 0.0, "heading_ki": 0.0, "heading_kd": 0.0, **extra}
+        )
+    )
+
+
+def test_heading_hold_cancels_a_drifting_chassis():
+    """Same 1 m drive and the same -10 deg/s drift, with and without the PID."""
+    open_loop, *_ = build_plant(-10.0, calib=_no_pid())
+    drifted = open_loop.drive(1.0, 0.5)
+    assert drifted.heading_deg < -40.0, "without the loop the drift bends the drive"
+
+    motion, *_ = build_plant(-10.0)
+    held = motion.drive(1.0, 0.5)
+    assert abs(held.heading_deg) < 2.0, f"PID heading hold left {held.heading_deg:.2f} deg"
+    assert held.x == pytest.approx(1.0, abs=0.01)
+    assert abs(held.y) < 0.02
+
+
+def test_heading_hold_steers_with_the_correct_wheel():
+    """Drifting clockwise, the loop must speed up the right wheel to turn back CCW."""
+    motion, motors, _, _, clock = build_plant(-10.0)
+    seen: list[tuple[float, float]] = []
+    original = clock.sleep
+
+    def record(dt: float) -> None:
+        seen.append(motors.last)
+        original(dt)
+
+    motion.sleep = record
+    motion.drive(0.5, 0.5)
+    later = seen[len(seen) // 2 :]
+    assert all(r > left for left, r in later)
+
+
+def test_heading_hold_works_driving_backwards():
+    motion, *_ = build_plant(-10.0)
+    held = motion.drive(-1.0, 0.5)
+    assert abs(held.heading_deg) < 2.0
+    assert held.x == pytest.approx(-1.0, abs=0.01)
+
+
+def test_heading_hold_keeps_both_wheels_out_of_the_buzzing_band():
+    motion, motors, _, _, clock = build_plant(-60.0)
+    seen: list[tuple[float, float]] = []
+    original = clock.sleep
+
+    def record(dt: float) -> None:
+        seen.append(motors.last)
+        original(dt)
+
+    motion.sleep = record
+    motion.drive(0.5, CALIB.motion.min_speed)
+    assert all(min(abs(a), abs(b)) >= CALIB.motion.min_speed - 1e-9 for a, b in seen if a or b)
+
+
+def test_heading_hold_still_stops_on_an_estop():
+    safety = FakeSafety()
+    motion, motors, _, _, clock = build(safety=safety)
+    motion.imu = PlantImu(motors, -10.0)
+    original = clock.sleep
+
+    def sleep_then_latch(dt: float) -> None:
+        original(dt)
+        safety._latched = True
+
+    motion.sleep = sleep_then_latch
+    with pytest.raises(Aborted) as exc:
+        motion.drive(1.0, 0.5)
+    assert exc.value.code == "E_ESTOP"
+
+
+def test_pid_turn_eases_off_near_the_target():
+    motion, motors, _, _, clock = build_plant(0.0)
+    duties: list[float] = []
+    original = clock.sleep
+
+    def record(dt: float) -> None:
+        duties.append(abs(motors.last[1]))
+        original(dt)
+
+    motion.sleep = record
+    pose, method = motion.turn(90.0, 0.8)
+    assert method == "gyro"
+    assert pose.heading_deg == pytest.approx(90.0, abs=CALIB.motion.turn_tol_deg + 0.5)
+    assert max(duties) <= 0.8 + 1e-9, "never faster than the requested speed"
+    assert duties[-1] < duties[0], "it slows down before it arrives"
+    assert duties[-1] >= CALIB.motion.min_speed - 1e-9
+
+
 # --- stop ----------------------------------------------------------------------------------
 
 

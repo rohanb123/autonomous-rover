@@ -197,5 +197,5 @@ Payload + scoop + wrist servo ≈ 40 g (estimate) at r ≈ 12 cm → τ ≈ 0.04
 - **Camera wobble** ruins the BEV homography. Re-calibrate after any mast change.
 - **IMU near motors** picks up vibration; foam tape and put it at the center.
 - **Scoop in the camera FOV during survey**: STOW must be fully out of frame.
-- **Wheel slip** on smooth floors makes timed drives lie; the paper/sand arena helps.
+- **Wheel slip** on smooth floors makes the speed-table distance estimate lie; the paper/sand arena helps.
 - **Markers**: print matte, flat, measure the real side length; glare kills ArUco.
